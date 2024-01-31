@@ -15,6 +15,14 @@ pub macro match_into($val:expr, $pat:pat => $result:expr) {
     }
 }
 
+pub macro match_into_unchecked($val:expr, $pat:pat => $result:expr) {
+    match $val {
+        $pat => $result,
+        #[allow(unreachable_patterns)]
+        _ => std::hint::unreachable_unchecked(),
+    }
+}
+
 pub trait OptionTryExtension<T> {
     fn try_map<U, E>(self, f: impl FnOnce(T) -> Result<U, E>) -> Result<Option<U>, E>;
     fn try_map_or<U, E>(self, default: U, f: impl FnOnce(T) -> Result<U, E>) -> Result<U, E>;

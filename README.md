@@ -1,4 +1,4 @@
-<img src="lmcc_logo.png">
+<img src="lmcc_logo.png" width="20%">
 
 # LMCC: Leslie's Mini C Compiler
 

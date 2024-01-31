@@ -29,8 +29,13 @@ pub enum Expr {
     InfixOp(Box<Spanned<Expr>>, InfixOpKind, Box<Spanned<Expr>>),
     InfixOpAssign(Box<Spanned<Expr>>, AssignOpKind, Box<Spanned<Expr>>),
     Assign(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
-    VarDecl(TyExpr, InternStr<'static>),
-    VarDeclAssign(TyExpr, Spanned<InternStr<'static>>, Box<Spanned<Expr>>),
+    VarDecl(StorageSpecifier, TyExpr, InternStr<'static>),
+    VarDeclAssign(
+        StorageSpecifier,
+        TyExpr,
+        Spanned<InternStr<'static>>,
+        Box<Spanned<Expr>>,
+    ),
     Return(Box<Spanned<Expr>>),
     FnDef(InternStr<'static>, Signature, Option<Vec<Spanned<Expr>>>),
     Labal(InternStr<'static>),
@@ -104,6 +109,20 @@ pub enum FloatSize {
     _64,
     /// Unsupported but defined here for error reporting.
     LongDouble,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageSpecifier {
+    /// `Unspecified` is for when the user did not add a storage specifier.
+    /// `Auto` is for when the user specified `auto`.
+    /// This is useful for error reporting when the user mistakes `auto` for `auto` in C++/C23.
+    Unspecified,
+    Static,
+    Register,
+    Extern,
+    /// `Unspecified` is for when the user did not add a storage specifier.
+    /// `Auto` is for when the user specified `auto`.
+    /// This is useful for error reporting when the user mistakes `auto` for `auto` in C++/C23.
+    Auto,
 }
 /// Not including sizeof because the RHS isn't an expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,16 +231,6 @@ pub struct Parser {
     tokens: Peekable<TokenStream>,
 }
 
-macro next_or_report_eof($self:expr, $prev_span:expr $(,)?) {{
-    let prev_span = $prev_span;
-    $self
-        .tokens
-        .next()
-        .ok_or(Error::UnexpectedEof.to_spanned((prev_span.file, prev_span.end)))
-        .inspect_err(|e| $self.err_reporter.report(e))
-        .ok()
-}}
-
 macro next_token_if($token_stream:expr, $pat:pat $(,)?) {{
     $token_stream.next_if(|t| matches!(t.inner(), $pat))
 }}
@@ -231,6 +240,29 @@ impl Parser {
         Self {
             err_reporter,
             tokens,
+        }
+    }
+
+    /// If token stream ends, reports `UnexpectedEOF` and return `None`.
+    fn expect_next_token(&mut self, prev_span: Span) -> Option<Spanned<Token>> {
+        self.tokens
+            .next()
+            .ok_or(Error::UnexpectedEof.to_spanned((prev_span.file, prev_span.end)))
+            .inspect_err(|e| self.err_reporter.report(e))
+            .ok()
+    }
+
+    /// If token stream ends, reports `UnexpectedEOF` and return `None`.
+    /// If token exists but is not an ident, report `ExpectIdent` and return `None`.
+    fn expect_ident(&mut self, prev_span: Span) -> Option<(InternStr<'static>, Span)> {
+        let token = self.expect_next_token(prev_span)?;
+        let span = token.span();
+        if let Some(ident) = match_into!(token.into_inner(), Token::Ident(ident) => ident) {
+            Some((ident, span))
+        } else {
+            self.err_reporter
+                .report(&Error::ExpectIdent.to_spanned(span));
+            None
         }
     }
 
@@ -271,7 +303,7 @@ impl Parser {
                 Token::Restrict => {
                     self.err_reporter
                         .report(&Error::RestrictOnNonPointer.to_spanned(token.span()));
-                    todo!()
+                    continue;
                 }
                 Token::Char
                 | Token::Double
@@ -294,7 +326,7 @@ impl Parser {
                         .report(&Error::ExpectTyExpr.to_spanned(token.span()));
                 }
             }
-            token = next_or_report_eof!(self, token.span())?;
+            token = self.expect_next_token(token.span())?;
         }
         let signness = signness_flag.unwrap_or(Signness::Signed);
         match token.inner() {
@@ -337,15 +369,70 @@ impl Parser {
                 }
                 Some(TyExpr::Bool)
             }
-            Token::Struct => todo!(),
-            Token::Enum => todo!(),
-            Token::Union => todo!(),
-            Token::Ident(..) => todo!(),
-            Token::Signed | Token::Unsigned => unreachable!(),
+            Token::Struct => {
+                if signness_flag.is_some() {
+                    self.err_reporter.report(
+                        &Error::InvalidSignnessFlag.to_spanned(signness_flag_span.unwrap()),
+                    );
+                }
+                let (name, _) = self.expect_ident(token.span())?;
+                Some(TyExpr::Struct(name))
+            }
+            Token::Enum => {
+                if signness_flag.is_some() {
+                    self.err_reporter.report(
+                        &Error::InvalidSignnessFlag.to_spanned(signness_flag_span.unwrap()),
+                    );
+                }
+                let (name, _) = self.expect_ident(token.span())?;
+                Some(TyExpr::Enum(name))
+            }
+            Token::Union => {
+                if signness_flag.is_some() {
+                    self.err_reporter.report(
+                        &Error::InvalidSignnessFlag.to_spanned(signness_flag_span.unwrap()),
+                    );
+                }
+                let (name, _) = self.expect_ident(token.span())?;
+                Some(TyExpr::Union(name))
+            }
+            &Token::Ident(name) => {
+                if signness_flag.is_some() {
+                    self.err_reporter.report(
+                        &Error::InvalidSignnessFlag.to_spanned(signness_flag_span.unwrap()),
+                    );
+                }
+                Some(TyExpr::Typename(name))
+            }
+            Token::Signed | Token::Unsigned | Token::Const | Token::Volatile | Token::Restrict => {
+                unreachable!()
+            }
             _ => {
                 self.err_reporter
                     .report(&Error::ExpectTyExpr.to_spanned(token.span()));
                 Some(TyExpr::Unknown)
+            }
+        }
+    }
+
+    fn parse_decl(
+        &mut self,
+        storage_spec: StorageSpecifier,
+        start_token: Spanned<Token>,
+    ) -> Option<Spanned<Expr>> {
+        let span = start_token.span();
+        let ty = self.parse_ty_expr(start_token)?;
+        let ident_token = self.expect_next_token(span)?;
+        let ident_token_span = ident_token.span();
+        let ident = match_into!(ident_token.into_inner(), Token::Ident(s) => s)
+            .ok_or(Error::ExpectIdent.to_spanned(ident_token_span))
+            .inspect_err(|e| self.err_reporter.report(e))
+            .ok()?;
+        match self.tokens.next() {
+            Some(t) if t.inner() == &Token::Eq => todo!(),
+            Some(t) if t.inner() == &Token::ParenOpen => todo!(),
+            _ => {
+                Some(Expr::VarDecl(storage_spec, ty, ident).to_spanned(span.join(ident_token_span)))
             }
         }
     }
@@ -363,13 +450,17 @@ impl Parser {
             Some(Expr::PrefixOp($opkind, Box::new(operand)).to_spanned(span.join(operand_span)))
         }}
         match token.into_inner() {
-            Token::Ident(s) => {
-                if next_token_if!(self.tokens, Token::Colon).is_some() {
+            Token::Ident(s) => match self.tokens.peek() {
+                Some(t) if t.inner() == &Token::Colon => {
+                    self.tokens.next();
                     Some(Expr::Labal(s).to_spanned(span))
-                } else {
-                    Some(Expr::Ident(s).to_spanned(span))
                 }
-            }
+                Some(t) if matches!(t.inner(), &Token::Ident(..)) => self.parse_decl(
+                    StorageSpecifier::Unspecified,
+                    Token::Ident(s).to_spanned(span),
+                ),
+                _ => Some(Expr::Ident(s).to_spanned(span)),
+            },
             Token::NumLiteral(n) => Some(Expr::NumLiteral(n).to_spanned(span)),
             Token::StrLiteral(s) => Some(Expr::StrLiteral(s).to_spanned(span)),
             Token::CharLiteral(c) => Some(Expr::CharLiteral(c).to_spanned(span)),
@@ -391,30 +482,33 @@ impl Parser {
             | t @ Token::Bool
             | t @ Token::Complex
             | t @ Token::Imaginary => {
-                let ty = self.parse_ty_expr(t.to_spanned(span))?;
-                let ident_token = next_or_report_eof!(self, span)?;
-                let ident_token_span = ident_token.span();
-                let ident = match_into!(ident_token.into_inner(), Token::Ident(s) => s)
-                    .ok_or(Error::ExpectIdent.to_spanned(ident_token_span))
-                    .inspect_err(|e| self.err_reporter.report(e))
-                    .ok()?;
-                match self.tokens.next() {
-                    Some(t) if t.inner() == &Token::Eq => todo!(),
-                    Some(t) if t.inner() == &Token::ParenOpen => todo!(),
-                    _ => Some(Expr::VarDecl(ty, ident).to_spanned(span.join(ident_token_span))),
-                }
+                self.parse_decl(StorageSpecifier::Unspecified, t.to_spanned(span))
             }
-            Token::Auto => todo!(),
+            Token::Auto => {
+                let token = self.expect_next_token(span)?;
+                self.parse_decl(StorageSpecifier::Auto, token)
+            }
+            Token::Register => {
+                let token = self.expect_next_token(span)?;
+                self.parse_decl(StorageSpecifier::Register, token)
+            }
+            Token::Extern => {
+                let token = self.expect_next_token(span)?;
+                self.parse_decl(StorageSpecifier::Extern, token)
+            }
+            Token::Static => {
+                let token = self.expect_next_token(span)?;
+                self.parse_decl(StorageSpecifier::Static, token)
+            }
             Token::Break => Some(Expr::Break.to_spanned(span)),
             Token::Case => todo!(),
             Token::Continue => Some(Expr::Continue.to_spanned(span)),
             Token::Default => todo!(),
             Token::Do => todo!(),
             Token::Else => todo!(),
-            Token::Extern => todo!(),
             Token::For => todo!(),
             Token::Goto => {
-                let token = next_or_report_eof!(self, span)?;
+                let token = self.expect_next_token(span)?;
                 let label_span = token.span();
                 let label_ident = match_into!(token.into_inner(), Token::Ident(s) => s)
                     .ok_or(Error::ExpectIdent.to_spanned(label_span))
@@ -424,10 +518,8 @@ impl Parser {
             }
             Token::If => todo!(),
             Token::Inline => todo!(),
-            Token::Register => todo!(),
             Token::Return => todo!(),
             Token::Sizeof => todo!(),
-            Token::Static => todo!(),
             Token::Switch => todo!(),
             Token::Typedef => todo!(),
             Token::While => todo!(),

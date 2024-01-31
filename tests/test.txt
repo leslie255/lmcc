@@ -1,1 +1,1 @@
-Type x;
+unsigned x

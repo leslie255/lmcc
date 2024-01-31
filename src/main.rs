@@ -36,8 +36,9 @@ fn main() {
     }.leak();
     let source = file_reader.read_file(path).unwrap();
     let token_stream = TokenStream::new(path, source, err_reporter.clone(), file_reader.clone());
-    let mut ast_parser = Parser::new(err_reporter.clone(), token_stream.peekable());
+    let ast_parser = Parser::new(err_reporter.clone(), token_stream.peekable());
     for expr in ast_parser {
         dbg!(expr);
     }
+    err_reporter.exit_if_has_error();
 }

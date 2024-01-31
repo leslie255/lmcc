@@ -1,11 +1,15 @@
 #![allow(dead_code)]
-use std::{iter::Peekable, rc::Rc};
+use std::{
+    fmt::{self, Debug},
+    iter::Peekable,
+    rc::Rc,
+};
 
 use crate::{
-    error::{Error, ErrorReporter, Spanned, ToSpanned},
+    error::{Error, ErrorReporter, Span, Spanned, ToSpanned},
     intern_str::InternStr,
     token::NumValue,
-    utils::match_into,
+    utils::{fixme, match_into},
 };
 
 #[allow(unused_imports)]
@@ -25,7 +29,7 @@ pub enum Expr {
     InfixOp(Box<Spanned<Expr>>, InfixOpKind, Box<Spanned<Expr>>),
     InfixOpAssign(Box<Spanned<Expr>>, AssignOpKind, Box<Spanned<Expr>>),
     Assign(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
-    VarDecl(InternStr<'static>, TyExpr),
+    VarDecl(TyExpr, InternStr<'static>),
     VarDeclAssign(TyExpr, Spanned<InternStr<'static>>, Box<Spanned<Expr>>),
     Return(Box<Spanned<Expr>>),
     FnDef(InternStr<'static>, Signature, Option<Vec<Spanned<Expr>>>),
@@ -35,16 +39,46 @@ pub enum Expr {
     Continue,
 }
 impl ToSpanned for Expr {}
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum TyExpr {
     Int(Signness, IntSize),
     Float(FloatSize),
+    Bool,
     Ptr(Box<TyExpr>),
     Struct(InternStr<'static>),
     Union(InternStr<'static>),
     Enum(InternStr<'static>),
     Typename(InternStr<'static>),
     Void,
+    Unknown,
+}
+impl Debug for TyExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            &Self::Int(sign, size) => {
+                if sign == Signness::Unsigned {
+                    write!(f, "unsigned ")?;
+                }
+                match size {
+                    IntSize::_8 => write!(f, "char"),
+                    IntSize::_16 => write!(f, "short"),
+                    IntSize::_32 => write!(f, "int"),
+                    IntSize::_64 => write!(f, "long"),
+                }
+            }
+            Self::Float(FloatSize::LongDouble) => write!(f, "long double"),
+            Self::Float(FloatSize::_64) => write!(f, "double"),
+            Self::Float(FloatSize::_32) => write!(f, "float"),
+            Self::Bool => write!(f, "_Bool"),
+            Self::Ptr(pointee) => write!(f, "{pointee:?}*"),
+            Self::Struct(name) => write!(f, "struct {name}"),
+            Self::Union(name) => write!(f, "union {name}"),
+            Self::Enum(name) => write!(f, "enum {name}"),
+            Self::Typename(name) => write!(f, "typename {name}"),
+            Self::Void => write!(f, "void"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Signness {
@@ -178,11 +212,14 @@ pub struct Parser {
     tokens: Peekable<TokenStream>,
 }
 
-macro next_or_err_eof($token_stream:expr, $prev_span:expr $(,)?) {{
+macro next_or_report_eof($self:expr, $prev_span:expr $(,)?) {{
     let prev_span = $prev_span;
-    $token_stream
+    $self
+        .tokens
         .next()
         .ok_or(Error::UnexpectedEof.to_spanned((prev_span.file, prev_span.end)))
+        .inspect_err(|e| $self.err_reporter.report(e))
+        .ok()
 }}
 
 macro next_token_if($token_stream:expr, $pat:pat $(,)?) {{
@@ -197,7 +234,123 @@ impl Parser {
         }
     }
 
-    fn parse_expr(&mut self, prec: u8) -> Option<Spanned<Expr>> {
+    fn parse_ty_expr(&mut self, start_token: Spanned<Token>) -> Option<TyExpr> {
+        let mut signness_flag = Option::<Signness>::None;
+        let mut signness_flag_span = Option::<Span>::None;
+        let mut token = start_token;
+        loop {
+            match token.inner() {
+                Token::Signed => {
+                    match signness_flag {
+                        Some(Signness::Signed) => fixme!("warnings for unneeded `signed` flag"),
+                        Some(Signness::Unsigned) => {
+                            self.err_reporter
+                                .report(&Error::ConflictingSignness.to_spanned(token.span()));
+                        }
+                        None => signness_flag = Some(Signness::Signed),
+                    };
+                    signness_flag_span = Some(
+                        signness_flag_span
+                            .map_or_else(|| token.span(), |span| span.join(token.span())),
+                    )
+                }
+                Token::Unsigned => {
+                    match signness_flag {
+                        Some(Signness::Signed) => {
+                            self.err_reporter
+                                .report(&Error::ConflictingSignness.to_spanned(token.span()));
+                        }
+                        Some(Signness::Unsigned) => fixme!("warnings for unneeded `unsigned` flag"),
+                        None => signness_flag = Some(Signness::Unsigned),
+                    };
+                    signness_flag_span = Some(
+                        signness_flag_span
+                            .map_or_else(|| token.span(), |span| span.join(token.span())),
+                    )
+                }
+                Token::Restrict => {
+                    self.err_reporter
+                        .report(&Error::RestrictOnNonPointer.to_spanned(token.span()));
+                    todo!()
+                }
+                Token::Char
+                | Token::Double
+                | Token::Enum
+                | Token::Float
+                | Token::Int
+                | Token::Long
+                | Token::Short
+                | Token::Struct
+                | Token::Union
+                | Token::Void
+                | Token::Bool
+                | Token::Ident(..) => break,
+                Token::Const => todo!(),
+                Token::Volatile => todo!(),
+                Token::Complex => todo!(),
+                Token::Imaginary => todo!(),
+                _ => {
+                    self.err_reporter
+                        .report(&Error::ExpectTyExpr.to_spanned(token.span()));
+                }
+            }
+            token = next_or_report_eof!(self, token.span())?;
+        }
+        let signness = signness_flag.unwrap_or(Signness::Signed);
+        match token.inner() {
+            Token::Char => Some(TyExpr::Int(signness, IntSize::_8)),
+            Token::Short => Some(TyExpr::Int(signness, IntSize::_16)),
+            Token::Int => Some(TyExpr::Int(signness, IntSize::_32)),
+            Token::Long => {
+                next_token_if!(self.tokens, Token::Long);
+                Some(TyExpr::Int(signness, IntSize::_64))
+            }
+            Token::Float => {
+                if signness_flag.is_some() {
+                    self.err_reporter.report(
+                        &Error::InvalidSignnessFlag.to_spanned(signness_flag_span.unwrap()),
+                    );
+                }
+                Some(TyExpr::Float(FloatSize::_32))
+            }
+            Token::Double => {
+                if signness_flag.is_some() {
+                    self.err_reporter.report(
+                        &Error::InvalidSignnessFlag.to_spanned(signness_flag_span.unwrap()),
+                    );
+                }
+                Some(TyExpr::Float(FloatSize::_64))
+            }
+            Token::Void => {
+                if signness_flag.is_some() {
+                    self.err_reporter.report(
+                        &Error::InvalidSignnessFlag.to_spanned(signness_flag_span.unwrap()),
+                    );
+                }
+                Some(TyExpr::Void)
+            }
+            Token::Bool => {
+                if signness_flag.is_some() {
+                    self.err_reporter.report(
+                        &Error::InvalidSignnessFlag.to_spanned(signness_flag_span.unwrap()),
+                    );
+                }
+                Some(TyExpr::Bool)
+            }
+            Token::Struct => todo!(),
+            Token::Enum => todo!(),
+            Token::Union => todo!(),
+            Token::Ident(..) => todo!(),
+            Token::Signed | Token::Unsigned => unreachable!(),
+            _ => {
+                self.err_reporter
+                    .report(&Error::ExpectTyExpr.to_spanned(token.span()));
+                Some(TyExpr::Unknown)
+            }
+        }
+    }
+
+    fn parse_expr(&mut self, _prec: u8) -> Option<Spanned<Expr>> {
         let token = self.tokens.next()?;
         let span = token.span();
         macro parse_prefix_op($prec:expr, $opkind:expr $(,)?) {{
@@ -220,24 +373,48 @@ impl Parser {
             Token::NumLiteral(n) => Some(Expr::NumLiteral(n).to_spanned(span)),
             Token::StrLiteral(s) => Some(Expr::StrLiteral(s).to_spanned(span)),
             Token::CharLiteral(c) => Some(Expr::CharLiteral(c).to_spanned(span)),
+            t @ Token::Char
+            | t @ Token::Const
+            | t @ Token::Double
+            | t @ Token::Enum
+            | t @ Token::Float
+            | t @ Token::Int
+            | t @ Token::Long
+            | t @ Token::Restrict
+            | t @ Token::Short
+            | t @ Token::Signed
+            | t @ Token::Struct
+            | t @ Token::Union
+            | t @ Token::Unsigned
+            | t @ Token::Void
+            | t @ Token::Volatile
+            | t @ Token::Bool
+            | t @ Token::Complex
+            | t @ Token::Imaginary => {
+                let ty = self.parse_ty_expr(t.to_spanned(span))?;
+                let ident_token = next_or_report_eof!(self, span)?;
+                let ident_token_span = ident_token.span();
+                let ident = match_into!(ident_token.into_inner(), Token::Ident(s) => s)
+                    .ok_or(Error::ExpectIdent.to_spanned(ident_token_span))
+                    .inspect_err(|e| self.err_reporter.report(e))
+                    .ok()?;
+                match self.tokens.next() {
+                    Some(t) if t.inner() == &Token::Eq => todo!(),
+                    Some(t) if t.inner() == &Token::ParenOpen => todo!(),
+                    _ => Some(Expr::VarDecl(ty, ident).to_spanned(span.join(ident_token_span))),
+                }
+            }
             Token::Auto => todo!(),
             Token::Break => Some(Expr::Break.to_spanned(span)),
             Token::Case => todo!(),
-            Token::Char => todo!(),
-            Token::Const => todo!(),
             Token::Continue => Some(Expr::Continue.to_spanned(span)),
             Token::Default => todo!(),
             Token::Do => todo!(),
-            Token::Double => todo!(),
             Token::Else => todo!(),
-            Token::Enum => todo!(),
             Token::Extern => todo!(),
-            Token::Float => todo!(),
             Token::For => todo!(),
             Token::Goto => {
-                let token = next_or_err_eof!(self.tokens, span)
-                    .inspect_err(|e| self.err_reporter.report(e))
-                    .ok()?;
+                let token = next_or_report_eof!(self, span)?;
                 let label_span = token.span();
                 let label_ident = match_into!(token.into_inner(), Token::Ident(s) => s)
                     .ok_or(Error::ExpectIdent.to_spanned(label_span))
@@ -247,26 +424,13 @@ impl Parser {
             }
             Token::If => todo!(),
             Token::Inline => todo!(),
-            Token::Int => todo!(),
-            Token::Long => todo!(),
             Token::Register => todo!(),
-            Token::Restrict => todo!(),
             Token::Return => todo!(),
-            Token::Short => todo!(),
-            Token::Signed => todo!(),
             Token::Sizeof => todo!(),
             Token::Static => todo!(),
-            Token::Struct => todo!(),
             Token::Switch => todo!(),
             Token::Typedef => todo!(),
-            Token::Union => todo!(),
-            Token::Unsigned => todo!(),
-            Token::Void => todo!(),
-            Token::Volatile => todo!(),
             Token::While => todo!(),
-            Token::Bool => todo!(),
-            Token::Complex => todo!(),
-            Token::Imaginary => todo!(),
             Token::Add => parse_prefix_op!(2, PrefixOpKind::UnaryAdd),
             Token::AddAdd => parse_prefix_op!(2, PrefixOpKind::PreInc),
             Token::AddEq => todo!(),

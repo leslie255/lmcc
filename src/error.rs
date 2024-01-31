@@ -34,6 +34,10 @@ pub enum Error {
     ExpectStrLiteral,
     ExpectToken(Token),
     UseOfAuto,
+    RestrictOnNonPointer,
+    ConflictingSignness,
+    InvalidSignnessFlag,
+    ExpectTyExpr,
 }
 
 impl ToSpanned for Error {}
@@ -351,15 +355,13 @@ impl ErrorReporter {
     }
 
     pub fn report(&self, err: &Spanned<Error>) {
-        self.error_count
-            .fetch_add(1, atomic::Ordering::SeqCst);
+        self.error_count.fetch_add(1, atomic::Ordering::SeqCst);
         print!("{}", ErrorFormatter::new(&self.file_reader, err))
     }
 
     #[allow(dead_code)]
     pub fn report_spanless(&self, err: Error) {
-        self.error_count
-            .fetch_add(1, atomic::Ordering::SeqCst);
+        self.error_count.fetch_add(1, atomic::Ordering::SeqCst);
         print!("{}", UnspannedErrorFormatter::new(&err))
     }
 

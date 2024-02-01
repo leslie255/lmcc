@@ -1,1 +1,1 @@
-unsigned long long *x;
+extern unsigned long* x = *&&++100

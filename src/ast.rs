@@ -31,11 +31,11 @@ pub enum Expr {
     InfixOp(Box<Spanned<Expr>>, InfixOpKind, Box<Spanned<Expr>>),
     InfixOpAssign(Box<Spanned<Expr>>, AssignOpKind, Box<Spanned<Expr>>),
     Assign(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
-    VarDecl(StorageSpecifier, Spanned<TyExpr>, InternStr<'static>),
+    VarDecl(VariableSpecifier, Spanned<TyExpr>, InternStr<'static>),
     VarDeclAssign(
-        StorageSpecifier,
+        VariableSpecifier,
         Spanned<TyExpr>,
-        Spanned<InternStr<'static>>,
+        InternStr<'static>,
         Box<Spanned<Expr>>,
     ),
     Return(Option<Box<Spanned<Expr>>>),
@@ -45,7 +45,6 @@ pub enum Expr {
     Break,
     Continue,
 }
-impl ToSpanned for Expr {}
 #[derive(Clone, PartialEq)]
 pub enum TyExpr {
     Int(Signness, IntSize),
@@ -59,7 +58,6 @@ pub enum TyExpr {
     Void,
     Unknown,
 }
-impl ToSpanned for TyExpr {}
 impl Debug for TyExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -113,8 +111,10 @@ pub enum FloatSize {
     /// Unsupported but defined here for error reporting.
     LongDouble,
 }
+/// Formally known as **storage specifiers**.
+/// See `DeclSpecifiers` for more info on the terms used in LMCC to describe specifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StorageSpecifier {
+pub enum VariableSpecifier {
     /// `Unspecified` is for when the user did not add a storage specifier.
     /// `Auto` is for when the user specified `auto`.
     /// This is useful for error reporting when the user mistakes `auto` for `auto` in C++/C23.
@@ -126,6 +126,21 @@ pub enum StorageSpecifier {
     /// `Auto` is for when the user specified `auto`.
     /// This is useful for error reporting when the user mistakes `auto` for `auto` in C++/C23.
     Auto,
+}
+/// See `DeclSpecifiers` for more info on the terms used in LMCC to describe specifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkageSpecifier {
+    Unspecified,
+    Static,
+    Extern,
+}
+/// Keywords that appears before a function declaration.
+/// Note that this term mean a different thing from the same term used in documents of C standards.
+/// See `DeclSpecifiers` for more info on the terms used in LMCC to describe specifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FunctionSpecifiers {
+    inline: bool,
+    linkage: LinkageSpecifier,
 }
 /// Not including sizeof because the RHS isn't an expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,6 +267,114 @@ macro expect_ident($self:expr, $prev_span:expr) {{
         None
     }
 }}
+
+/// The union set of function specifers and variable specifiers.
+/// LMCC uses slightly different terms to those used in the documents of C standards.
+///
+/// - **variable specifer** is keywords that appear before a variable declaration.
+/// - **function specifer** is keywords that appear before a function declaration.
+/// - **declaration specifier** is the union set of function and variable specifiers.
+///
+/// `DeclSpecifiers` are only used during parsering, they are reduced to function or variable specifiers afterwards,
+/// reporting invalid combinations of specifiers (if any) during the reduction.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+struct DeclSpecifiers {
+    static_: Option<Span>,
+    inline: Option<Span>,
+    extern_: Option<Span>,
+    register: Option<Span>,
+    auto: Option<Span>,
+}
+
+impl DeclSpecifiers {
+    fn set_static(&mut self, span: Span, err_reporter: &ErrorReporter) {
+        if let Some(span) = self.static_ {
+            err_reporter.report(&Error::DuplicateSpecifier.to_spanned(span));
+        } else {
+            self.static_ = Some(span);
+        }
+    }
+    fn set_inline(&mut self, span: Span, err_reporter: &ErrorReporter) {
+        if let Some(span) = self.inline {
+            err_reporter.report(&Error::DuplicateSpecifier.to_spanned(span));
+        } else {
+            self.inline = Some(span);
+        }
+    }
+    fn set_extern(&mut self, span: Span, err_reporter: &ErrorReporter) {
+        if let Some(span) = self.extern_ {
+            err_reporter.report(&Error::DuplicateSpecifier.to_spanned(span));
+        } else {
+            self.extern_ = Some(span);
+        }
+    }
+    fn set_register(&mut self, span: Span, err_reporter: &ErrorReporter) {
+        if let Some(span) = self.register {
+            err_reporter.report(&Error::DuplicateSpecifier.to_spanned(span));
+        } else {
+            self.register = Some(span);
+        }
+    }
+    fn set_auto(&mut self, span: Span, err_reporter: &ErrorReporter) {
+        if let Some(span) = self.auto {
+            err_reporter.report(&Error::DuplicateSpecifier.to_spanned(span));
+        } else {
+            self.auto = Some(span);
+        }
+    }
+    /// For invalid combinations of specifiers, report the error and return a guess of what the user meant.
+    fn try_into_varspec(self, err_reporter: &ErrorReporter) -> VariableSpecifier {
+        macro ensure_no($keyword:tt, $err:tt $(,)?) {
+            self.$keyword
+                .inspect(|&span| err_reporter.report(&Error::$err.to_spanned(span)))
+        }
+        if self.static_.is_some() {
+            ensure_no!(register, ConflictingStorageClass);
+            ensure_no!(extern_, ConflictingStorageClass);
+            ensure_no!(auto, ConflictingStorageClass);
+            VariableSpecifier::Static
+        } else if self.register.is_some() {
+            ensure_no!(static_, ConflictingStorageClass);
+            ensure_no!(extern_, ConflictingStorageClass);
+            ensure_no!(auto, ConflictingStorageClass);
+            VariableSpecifier::Register
+        } else if self.extern_.is_some() {
+            ensure_no!(static_, ConflictingStorageClass);
+            ensure_no!(register, ConflictingStorageClass);
+            ensure_no!(auto, ConflictingStorageClass);
+            VariableSpecifier::Extern
+        } else if self.auto.is_some() {
+            ensure_no!(static_, ConflictingStorageClass);
+            ensure_no!(register, ConflictingStorageClass);
+            ensure_no!(extern_, ConflictingStorageClass);
+            VariableSpecifier::Auto
+        } else {
+            VariableSpecifier::Unspecified
+        }
+    }
+    /// For invalid combinations of specifiers, report the error and return a guess of what the user meant.
+    fn try_into_fnspec(self, err_reporter: &ErrorReporter) -> FunctionSpecifiers {
+        macro ensure_no($keyword:tt, $err:tt $(,)?) {
+            self.$keyword
+                .inspect(|&span| err_reporter.report(&Error::$err.to_spanned(span)))
+        }
+        ensure_no!(register, InvalidStorageClassOnFunc);
+        ensure_no!(auto, InvalidStorageClassOnFunc);
+        let linkage = if self.extern_.is_some() {
+            ensure_no!(static_, ConflictingStorageClass);
+            LinkageSpecifier::Extern
+        } else if self.static_.is_some() {
+            ensure_no!(extern_, ConflictingStorageClass);
+            LinkageSpecifier::Static
+        } else {
+            LinkageSpecifier::Unspecified
+        };
+        FunctionSpecifiers {
+            inline: self.inline.is_some(),
+            linkage,
+        }
+    }
+}
 
 impl Parser {
     pub fn new(err_reporter: Rc<ErrorReporter>, tokens: Peekable<TokenStream>) -> Self {
@@ -478,20 +601,59 @@ impl Parser {
         Some(ty)
     }
 
-    fn parse_decl(
-        &mut self,
-        storage_spec: StorageSpecifier,
-        prev_span: Span,
-    ) -> Option<Spanned<Expr>> {
+    fn parse_decl(&mut self, prev_span: Span) -> Option<Spanned<Expr>> {
+        let mut decl_specs = DeclSpecifiers::default();
+        while let Some(token) = self.expect_peek_token(prev_span) {
+            match token.inner() {
+                Token::Static => {
+                    let span = token.span();
+                    self.tokens.next();
+                    decl_specs.set_static(span, &self.err_reporter);
+                }
+                Token::Inline => {
+                    let span = token.span();
+                    self.tokens.next();
+                    decl_specs.set_inline(span, &self.err_reporter);
+                }
+                Token::Extern => {
+                    let span = token.span();
+                    self.tokens.next();
+                    decl_specs.set_extern(span, &self.err_reporter);
+                }
+                Token::Register => {
+                    let span = token.span();
+                    self.tokens.next();
+                    decl_specs.set_register(span, &self.err_reporter);
+                }
+                Token::Auto => {
+                    let span = token.span();
+                    self.tokens.next();
+                    decl_specs.set_auto(span, &self.err_reporter);
+                }
+                _ => break,
+            }
+        }
         let ty = self.parse_ty_expr(prev_span)?;
         let ty_span = ty.span();
         let Some((ident, ident_span)) = expect_ident!(self, prev_span) else {
             return None;
         };
-        match self.tokens.next() {
-            Some(t) if t.inner() == &Token::Eq => todo!(),
+        match self.tokens.peek() {
+            Some(t) if t.inner() == &Token::Eq => {
+                self.tokens.next();
+                let var_specs = decl_specs.try_into_varspec(&self.err_reporter);
+                let rhs = self.parse_expr(ident_span, 16)?;
+                let rhs_span = rhs.span();
+                Some(
+                    Expr::VarDeclAssign(var_specs, ty, ident, Box::new(rhs))
+                        .to_spanned(ty_span.join(rhs_span)),
+                )
+            }
             Some(t) if t.inner() == &Token::ParenOpen => todo!(),
-            _ => Some(Expr::VarDecl(storage_spec, ty, ident).to_spanned(ty_span.join(ident_span))),
+            _ => {
+                let var_specs = decl_specs.try_into_varspec(&self.err_reporter);
+                Some(Expr::VarDecl(var_specs, ty, ident).to_spanned(ty_span.join(ident_span)))
+            }
         }
     }
 
@@ -513,7 +675,7 @@ impl Parser {
                         Some(Expr::Labal(s).to_spanned(span))
                     }
                     Some(t) if matches!(t.inner(), &Token::Ident(..)) => {
-                        self.parse_decl(StorageSpecifier::Unspecified, span)
+                        todo!();
                     }
                     _ => Some(Expr::Ident(s).to_spanned(span)),
                 }
@@ -549,23 +711,12 @@ impl Parser {
             | Token::Volatile
             | Token::Bool
             | Token::Complex
-            | Token::Imaginary => self.parse_decl(StorageSpecifier::Unspecified, span),
-            Token::Auto => {
-                self.tokens.next();
-                self.parse_decl(StorageSpecifier::Auto, span)
-            }
-            Token::Register => {
-                self.tokens.next();
-                self.parse_decl(StorageSpecifier::Register, span)
-            }
-            Token::Extern => {
-                self.tokens.next();
-                self.parse_decl(StorageSpecifier::Extern, span)
-            }
-            Token::Static => {
-                self.tokens.next();
-                self.parse_decl(StorageSpecifier::Static, span)
-            }
+            | Token::Imaginary
+            | Token::Auto
+            | Token::Register
+            | Token::Extern
+            | Token::Static
+            | Token::Inline => self.parse_decl(span),
             Token::Break => {
                 self.tokens.next();
                 Some(Expr::Break.to_spanned(span))
@@ -587,7 +738,6 @@ impl Parser {
                 Some(Expr::Goto(ident).to_spanned(span.join(ident_span)))
             }
             Token::If => todo!(),
-            Token::Inline => todo!(),
             Token::Return => {
                 self.tokens.next();
                 match self.tokens.peek() {

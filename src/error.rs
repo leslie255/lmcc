@@ -38,9 +38,10 @@ pub enum Error {
     ConflictingSignness,
     InvalidSignnessFlag,
     ExpectTyExpr,
+    InvalidStorageClassOnFunc,
+    ConflictingStorageClass,
+    DuplicateSpecifier,
 }
-
-impl ToSpanned for Error {}
 
 impl Error {
     fn description<'a>(&'a self) -> ErrorDescription<'a> {
@@ -226,8 +227,11 @@ impl From<(&'static str, usize)> for Span {
 pub trait ToSpanned {
     fn to_spanned(self, span: impl Into<Span>) -> Spanned<Self>
     where
-        Self: Sized,
-    {
+        Self: Sized;
+}
+
+impl<T> ToSpanned for T {
+    fn to_spanned(self, span: impl Into<Span>) -> Spanned<Self> {
         Spanned {
             inner: self,
             span: span.into(),

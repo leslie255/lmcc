@@ -108,7 +108,6 @@ pub enum Token {
 
     Backslash,
 }
-impl ToSpanned for Token {}
 impl Debug for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

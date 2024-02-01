@@ -119,6 +119,22 @@ impl<T> Spanned<T> {
     pub fn into_inner(self) -> T {
         self.inner
     }
+
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spanned<U> {
+        let span = self.span();
+        Spanned {
+            inner: f(self.into_inner()),
+            span,
+        }
+    }
+
+    pub fn try_map<U, E>(self, f: impl FnOnce(T) -> Result<U, E>) -> Result<Spanned<U>, E> {
+        let span = self.span();
+        Ok(Spanned {
+            inner: f(self.into_inner())?,
+            span,
+        })
+    }
 }
 
 impl<T> Deref for Spanned<T> {
@@ -149,6 +165,20 @@ impl Span {
             file: self.file,
             start: self.start,
             end: other.end,
+        }
+    }
+    pub const fn tail(self) -> Self {
+        Self {
+            file: self.file,
+            start: self.end,
+            end: self.end,
+        }
+    }
+    pub const fn head(self) -> Self {
+        Self {
+            file: self.file,
+            start: self.start,
+            end: self.start,
         }
     }
 }

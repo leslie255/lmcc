@@ -31,14 +31,14 @@ pub enum Expr {
     InfixOp(Box<Spanned<Expr>>, InfixOpKind, Box<Spanned<Expr>>),
     InfixOpAssign(Box<Spanned<Expr>>, AssignOpKind, Box<Spanned<Expr>>),
     Assign(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
-    VarDecl(StorageSpecifier, TyExpr, InternStr<'static>),
+    VarDecl(StorageSpecifier, Spanned<TyExpr>, InternStr<'static>),
     VarDeclAssign(
         StorageSpecifier,
-        TyExpr,
+        Spanned<TyExpr>,
         Spanned<InternStr<'static>>,
         Box<Spanned<Expr>>,
     ),
-    Return(Box<Spanned<Expr>>),
+    Return(Option<Box<Spanned<Expr>>>),
     FnDef(InternStr<'static>, Signature, Option<Vec<Spanned<Expr>>>),
     Labal(InternStr<'static>),
     Goto(InternStr<'static>),
@@ -59,6 +59,7 @@ pub enum TyExpr {
     Void,
     Unknown,
 }
+impl ToSpanned for TyExpr {}
 impl Debug for TyExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -278,7 +279,7 @@ impl Parser {
             .ok()
     }
 
-    fn parse_ty_expr(&mut self, prev_span: Span) -> Option<TyExpr> {
+    fn parse_ty_expr(&mut self, prev_span: Span) -> Option<Spanned<TyExpr>> {
         let mut signness_flag = Option::<Signness>::None;
         let mut signness_flag_span = Option::<Span>::None;
         let mut prev_span = prev_span;
@@ -330,19 +331,24 @@ impl Parser {
                 | Token::Union
                 | Token::Void
                 | Token::Bool
-                | Token::Ident(..) => break,
+                | Token::Ident(..)
+                | Token::Mul => break,
                 Token::Const => todo!(),
                 Token::Volatile => todo!(),
                 Token::Complex => todo!(),
                 Token::Imaginary => todo!(),
-                _ => {
-                    self.err_reporter
-                        .report(&Error::ExpectTyExpr.to_spanned(prev_span));
-                    match signness_flag {
-                        Some(sign) => return Some(TyExpr::Int(sign, IntSize::_32)),
-                        None => return Some(TyExpr::Unknown),
+                _ => match signness_flag {
+                    Some(sign) => {
+                        return Some(
+                            TyExpr::Int(sign, IntSize::_32).to_spanned(signness_flag_span.unwrap()),
+                        )
                     }
-                }
+                    None => {
+                        self.err_reporter
+                            .report(&Error::ExpectTyExpr.to_spanned(prev_span));
+                        return Some(TyExpr::Unknown.to_spanned(prev_span));
+                    }
+                },
             }
         }
         let signness = signness_flag.unwrap_or(Signness::Signed);
@@ -354,84 +360,122 @@ impl Parser {
         }}
         let token = self.expect_peek_token(prev_span)?;
         let span = token.span();
-        match token.inner() {
+        // Joined span from signness span to the end of the type expression span.
+        // Does not work for pointers.
+        let joined_span = signness_flag_span.map_or(span, |s| s.join(span));
+        let ty = match token.inner() {
             Token::Char => {
                 self.tokens.next();
-                Some(TyExpr::Int(signness, IntSize::_8))
+                Some(TyExpr::Int(signness, IntSize::_8).to_spanned(joined_span))
             }
             Token::Short => {
                 self.tokens.next();
-                Some(TyExpr::Int(signness, IntSize::_16))
+                Some(TyExpr::Int(signness, IntSize::_16).to_spanned(joined_span))
             }
             Token::Int => {
                 self.tokens.next();
-                Some(TyExpr::Int(signness, IntSize::_32))
+                Some(TyExpr::Int(signness, IntSize::_32).to_spanned(joined_span))
             }
             Token::Long => {
                 self.tokens.next();
                 next_token_if_matches!(self.tokens, Token::Long);
-                Some(TyExpr::Int(signness, IntSize::_64))
+                Some(TyExpr::Int(signness, IntSize::_64).to_spanned(joined_span))
             }
             Token::Float => {
                 self.tokens.next();
                 report_if_has_signness!();
-                Some(TyExpr::Float(FloatSize::_32))
+                Some(TyExpr::Float(FloatSize::_32).to_spanned(joined_span))
             }
             Token::Double => {
                 self.tokens.next();
                 report_if_has_signness!();
-                Some(TyExpr::Float(FloatSize::_64))
+                Some(TyExpr::Float(FloatSize::_64).to_spanned(joined_span))
             }
             Token::Void => {
                 self.tokens.next();
                 report_if_has_signness!();
-                Some(TyExpr::Void)
+                Some(TyExpr::Void.to_spanned(joined_span))
             }
             Token::Bool => {
                 self.tokens.next();
                 report_if_has_signness!();
-                Some(TyExpr::Bool)
+                Some(TyExpr::Bool.to_spanned(joined_span))
             }
             Token::Struct => {
                 self.tokens.next();
                 report_if_has_signness!();
-                let ty = expect_ident!(self, span)
-                    .map_or_else(|| TyExpr::Unknown, |(name, _)| TyExpr::Struct(name));
+                let ty = expect_ident!(self, span).map_or_else(
+                    || TyExpr::Unknown.to_spanned(joined_span),
+                    |(name, span)| TyExpr::Struct(name).to_spanned(joined_span.join(span)),
+                );
                 Some(ty)
             }
             Token::Enum => {
                 self.tokens.next();
                 report_if_has_signness!();
-                let ty = expect_ident!(self, span)
-                    .map_or_else(|| TyExpr::Unknown, |(name, _)| TyExpr::Enum(name));
+                let ty = expect_ident!(self, span).map_or_else(
+                    || TyExpr::Unknown.to_spanned(joined_span),
+                    |(name, span)| TyExpr::Enum(name).to_spanned(joined_span.join(span)),
+                );
                 Some(ty)
             }
             Token::Union => {
                 self.tokens.next();
                 report_if_has_signness!();
-                let ty = expect_ident!(self, span)
-                    .map_or_else(|| TyExpr::Unknown, |(name, _)| TyExpr::Union(name));
+                let ty = expect_ident!(self, span).map_or_else(
+                    || TyExpr::Unknown.to_spanned(joined_span),
+                    |(name, span)| TyExpr::Union(name).to_spanned(joined_span.join(span)),
+                );
                 Some(ty)
             }
             &Token::Ident(name) => match signness_flag {
-                Some(sign) => Some(TyExpr::Int(sign, IntSize::_32)),
+                Some(sign) => {
+                    Some(TyExpr::Int(sign, IntSize::_32).to_spanned(signness_flag_span.unwrap()))
+                }
                 _ => {
                     self.tokens.next();
-                    Some(TyExpr::Typename(name))
+                    Some(TyExpr::Typename(name).to_spanned(joined_span))
+                }
+            },
+            &Token::Mul => match signness_flag {
+                Some(sign) => {
+                    self.tokens.next();
+                    let inner = TyExpr::Int(sign, IntSize::_32);
+                    Some(TyExpr::Ptr(Box::new(inner)).to_spanned(joined_span))
+                }
+                _ => {
+                    self.err_reporter
+                        .report(&Error::ExpectTyExpr.to_spanned(span));
+                    Some(TyExpr::Unknown.to_spanned(prev_span.tail()))
                 }
             },
             Token::Signed | Token::Unsigned | Token::Const | Token::Volatile | Token::Restrict => {
                 unreachable!()
             }
             _ => match signness_flag {
-                Some(s) => Some(TyExpr::Int(s, IntSize::_32)),
+                Some(s) => {
+                    Some(TyExpr::Int(s, IntSize::_32).to_spanned(signness_flag_span.unwrap()))
+                }
                 None => {
                     self.err_reporter
                         .report(&Error::ExpectTyExpr.to_spanned(span));
-                    Some(TyExpr::Unknown)
+                    Some(TyExpr::Unknown.to_spanned(prev_span.tail()))
                 }
             },
+        };
+        let mut ty = ty?;
+        while let Some(token) = self.tokens.peek() {
+            let span = token.span();
+            match token.inner() {
+                Token::Mul => {
+                    self.tokens.next();
+                    let span = ty.span().join(span);
+                    ty = TyExpr::Ptr(Box::new(ty.into_inner())).to_spanned(span);
+                }
+                _ => break,
+            }
         }
+        Some(ty)
     }
 
     fn parse_decl(
@@ -440,30 +484,23 @@ impl Parser {
         prev_span: Span,
     ) -> Option<Spanned<Expr>> {
         let ty = self.parse_ty_expr(prev_span)?;
-        let ident_token = self.expect_next_token(prev_span)?;
-        let ident_token_span = ident_token.span();
-        let ident = match_into!(ident_token.into_inner(), Token::Ident(s) => s)
-            .ok_or(Error::ExpectIdent.to_spanned(ident_token_span))
-            .inspect_err(|e| self.err_reporter.report(e))
-            .ok()?;
+        let ty_span = ty.span();
+        let Some((ident, ident_span)) = expect_ident!(self, prev_span) else {
+            return None;
+        };
         match self.tokens.next() {
             Some(t) if t.inner() == &Token::Eq => todo!(),
             Some(t) if t.inner() == &Token::ParenOpen => todo!(),
-            _ => Some(
-                Expr::VarDecl(storage_spec, ty, ident).to_spanned(prev_span.join(ident_token_span)),
-            ),
+            _ => Some(Expr::VarDecl(storage_spec, ty, ident).to_spanned(ty_span.join(ident_span))),
         }
     }
 
-    fn parse_expr(&mut self, _prec: u8) -> Option<Spanned<Expr>> {
-        let token = self.tokens.peek()?;
+    fn parse_expr(&mut self, prev_span: Span, _prec: u16) -> Option<Spanned<Expr>> {
+        let token = self.expect_peek_token(prev_span)?;
         let span = token.span();
         macro parse_prefix_op($prec:expr, $opkind:expr $(,)?) {{
-            let operand = self
-                .parse_expr($prec)
-                .ok_or(Error::UnexpectedEof.to_spanned(span))
-                .inspect_err(|e| self.err_reporter.report(e))
-                .ok()?;
+            self.tokens.next();
+            let operand = self.parse_expr(span, $prec)?;
             let operand_span = operand.span();
             Some(Expr::PrefixOp($opkind, Box::new(operand)).to_spanned(span.join(operand_span)))
         }}
@@ -543,6 +580,7 @@ impl Parser {
             Token::Else => todo!(),
             Token::For => todo!(),
             Token::Goto => {
+                self.tokens.next();
                 let Some((ident, ident_span)) = expect_ident!(self, span) else {
                     return Some(Expr::Error.to_spanned(span));
                 };
@@ -550,7 +588,24 @@ impl Parser {
             }
             Token::If => todo!(),
             Token::Inline => todo!(),
-            Token::Return => todo!(),
+            Token::Return => {
+                self.tokens.next();
+                match self.tokens.peek() {
+                    Some(t) if matches!(t.inner(), Token::Semicolon | Token::Comma) => {
+                        Some(Expr::Return(None).to_spanned(span))
+                    }
+                    None => Some(Expr::Return(None).to_spanned(span)),
+                    Some(..) => {
+                        self.tokens.next();
+                        let operand = self.parse_expr(span, 16)?;
+                        let operand_span = operand.span();
+                        Some(
+                            Expr::Return(Some(Box::new(operand)))
+                                .to_spanned(span.join(operand_span)),
+                        )
+                    }
+                }
+            }
             Token::Sizeof => todo!(),
             Token::Switch => todo!(),
             Token::Typedef => todo!(),
@@ -581,14 +636,11 @@ impl Parser {
             Token::ExcEq => todo!(),
             Token::And => parse_prefix_op!(2, PrefixOpKind::Ref),
             Token::AndAnd => {
+                self.tokens.next();
                 // `&&` can be used to take reference twice.
                 // The outer `&` would be invalid (since the value produced by `&expr` is an rvalue),
                 // but error would be reported later down the line.
-                let inner_operand = self
-                    .parse_expr(2)
-                    .ok_or(Error::UnexpectedEof.to_spanned(span))
-                    .inspect_err(|e| self.err_reporter.report(e))
-                    .ok()?;
+                let inner_operand = self.parse_expr(span, 2)?;
                 let inner_span = inner_operand.span();
                 let outer_operand = Expr::PrefixOp(PrefixOpKind::Ref, Box::new(inner_operand))
                     .to_spanned((span.file, span.start + 1, inner_span.end));
@@ -628,6 +680,7 @@ impl Iterator for Parser {
     type Item = Spanned<Expr>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.parse_expr(16)
+        let span = self.tokens.peek()?.span();
+        self.parse_expr(span, 16)
     }
 }

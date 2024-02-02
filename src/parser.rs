@@ -5,7 +5,7 @@ use crate::{
     error::{Error, ErrorReporter, Span, Spanned, ToSpanned},
     intern_str::InternStr,
     token::NumValue,
-    utils::{fixme, match_into, match_into_unchecked},
+    utils::{fixme, match_into_unchecked},
 };
 
 use super::token::{Token, TokenStream};
@@ -15,20 +15,6 @@ pub struct Parser {
     err_reporter: Rc<ErrorReporter>,
     tokens: Peekable<TokenStream>,
 }
-
-/// Returns `Some((InternStr<'static>, Span))` if is an identifier.
-/// Returns `None` if not an ident.
-macro expect_ident($self:expr, $prev_span:expr) {{
-    let token = $self.expect_next_token($prev_span)?;
-    let span = token.span();
-    if let Some(ident) = match_into!(token.into_inner(), Token::Ident(ident) => ident) {
-        Some((ident, span))
-    } else {
-        $self.err_reporter
-            .report(&Error::ExpectIdent.to_spanned(span));
-        None
-    }
-}}
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 struct DeclSpecifiers {
@@ -223,6 +209,18 @@ impl Parser {
             .ok_or(Error::UnexpectedEof.to_spanned((prev_span.file, prev_span.end)))
             .inspect_err(|e| self.err_reporter.report(e))
             .ok()
+    }
+
+    fn expect_ident(&mut self, prev_span: Span) -> Option<Spanned<InternStr<'static>>> {
+        let token = self.expect_next_token(prev_span)?;
+        let span = token.span();
+        if let Token::Ident(ident) = token.into_inner() {
+            Some(ident.to_spanned(prev_span))
+        } else {
+            self.err_reporter
+                .report(&Error::ExpectIdent.to_spanned(span));
+            None
+        }
     }
 
     /// If token stream ends, reports `UnexpectedEOF` and return `None`.
@@ -545,7 +543,7 @@ impl Parser {
         let ty = self.deduce_ty_speci(decl_speci);
         let ty = self.parse_ptr_decl(ty);
         let ty_span = ty.span();
-        let (ident, ident_span) = expect_ident!(self, ty_span)?;
+        let (ident, ident_span) = self.expect_ident(ty_span)?.into_pair();
         let ty = self.parse_arr_decl(ty)?;
 
         match self.tokens.peek() {
@@ -688,7 +686,7 @@ impl Parser {
             Token::For => todo!(),
             Token::Goto => {
                 self.tokens.next();
-                if let Some((ident, ident_span)) = expect_ident!(self, span) {
+                if let Some((ident, ident_span)) = self.expect_ident(span).map(Spanned::into_pair) {
                     Some(Expr::Goto(ident).to_spanned(span.join(ident_span)))
                 } else {
                     return Some(Expr::Error.to_spanned(span));
@@ -724,7 +722,7 @@ impl Parser {
             Token::SubSub => parse_prefix_op!(2, PrefixOpKind::PreDec),
             Token::SubEq => todo!(),
             Token::Arrow => todo!(),
-            Token::Mul => parse_prefix_op!(2, PrefixOpKind::Ref),
+            Token::Mul => parse_prefix_op!(2, PrefixOpKind::Deref),
             Token::MulEq => todo!(),
             Token::Div => todo!(),
             Token::DivEq => todo!(),

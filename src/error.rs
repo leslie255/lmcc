@@ -2,7 +2,7 @@
 use std::{
     borrow::Cow,
     fmt::{self, Debug, Display},
-    ops::Deref,
+    ops::{Deref, DerefMut},
     process,
     rc::Rc,
     sync::atomic::{self, AtomicU32},
@@ -130,6 +130,14 @@ impl<T> Spanned<T> {
         self.inner
     }
 
+    pub fn into_pair(self) -> (T, Span) {
+        (self.inner, self.span)
+    }
+
+    pub const fn as_pair(&self) -> (&T, Span) {
+        (&self.inner, self.span)
+    }
+
     pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spanned<U> {
         let span = self.span();
         Spanned {
@@ -152,6 +160,11 @@ impl<T> Deref for Spanned<T> {
 
     fn deref(&self) -> &Self::Target {
         &self.inner
+    }
+}
+impl<T> DerefMut for Spanned<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
     }
 }
 

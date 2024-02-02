@@ -33,7 +33,6 @@ pub enum Expr {
         InternStr<'static>,
         Box<Spanned<Expr>>,
     ),
-    /// Fuck C.
     DeclList(Vec<DeclItem>),
     Return(Option<Box<Spanned<Expr>>>),
     FuncDef(

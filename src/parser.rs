@@ -235,19 +235,21 @@ impl Parser {
     }
 
     /// Parse decl specifiers.
-    fn parse_decl_speci(&mut self, mut prev_span: Span) -> Spanned<DeclSpecifiers> {
-        let start_span = prev_span;
-        // Parse decl specifiers.
-        let mut decl_speci = DeclSpecifiers::default();
+    fn parse_decl_speci(
+        &mut self,
+        prev_span: Span,
+        mut decl_speci: DeclSpecifiers,
+    ) -> Spanned<DeclSpecifiers> {
+        let mut end_span = prev_span;
         while let Some(token) = self.tokens.peek() {
             if decl_speci.add_token(&self.err_reporter, token).is_ok() {
-                prev_span = token.span();
+                end_span = token.span();
                 self.tokens.next();
             } else {
                 break;
             }
         }
-        decl_speci.to_spanned(start_span.join(prev_span))
+        decl_speci.to_spanned(prev_span.join(end_span))
     }
 
     /// Deduce a type from decl specifiers.
@@ -469,7 +471,8 @@ impl Parser {
         } else {
             loop {
                 let mut prev_span = prev_span;
-                let decl_speci = self.parse_decl_speci(prev_span);
+                let decl_speci = DeclSpecifiers::default();
+                let decl_speci = self.parse_decl_speci(prev_span, decl_speci);
                 {
                     macro ensure_no($keyword:tt, $err:tt $(,)?) {
                         decl_speci.$keyword.inspect(|&span| {
@@ -592,7 +595,8 @@ impl Parser {
 
     /// Parse an entire decl statement.
     fn parse_decl(&mut self, prev_span: Span) -> Option<Spanned<Expr>> {
-        let decl_speci = self.parse_decl_speci(prev_span);
+        let decl_speci = DeclSpecifiers::default();
+        let decl_speci = self.parse_decl_speci(prev_span, decl_speci);
         self.parse_decl_content(prev_span, &decl_speci)
     }
 
@@ -617,6 +621,7 @@ impl Parser {
                         let mut decl_speci = DeclSpecifiers::default();
                         decl_speci.add_typename(s.to_spanned(span));
                         let span = span.join(next_ident.span());
+                        self.parse_decl_speci(span, decl_speci);
                         self.parse_decl_content(span, &decl_speci.to_spanned(span))
                     }
                     Some(t) if t.is_decl_speci() => {
@@ -625,6 +630,7 @@ impl Parser {
                         decl_speci.add_token(&self.err_reporter, t).unwrap();
                         let span1 = t.span();
                         self.tokens.next();
+                        self.parse_decl_speci(span, decl_speci);
                         self.parse_decl_content(span1, &decl_speci.to_spanned(span.join(span1)))
                     }
                     _ => Some(Expr::Ident(s).to_spanned(span)),

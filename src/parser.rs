@@ -32,16 +32,16 @@ macro expect_ident($self:expr, $prev_span:expr) {{
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 struct DeclSpecifiers {
-    // Storage/linkage class.
+    // --- storage-class (linkage-class) ---
     static_: Option<Span>,
     extern_: Option<Span>,
     register: Option<Span>,
     auto: Option<Span>,
 
-    // Function.
+    // --- inline ---
     inline: Option<Span>,
 
-    // Type.
+    // --- type specifiers ---
     signness: Option<Spanned<Signness>>,
     char: Option<Span>,
     short: Option<Span>,
@@ -51,16 +51,108 @@ struct DeclSpecifiers {
     float: Option<Span>,
     double: Option<Span>,
     bool: Option<Span>,
-    complex: Option<Span>,
-    imaginary: Option<Span>,
+    typename: Option<Spanned<InternStr<'static>>>,
 
-    // Type qualifiers.
+    // --- type qualifiers ---
     const_: Option<Span>,
     restrict: Option<Span>,
     volatile: Option<Span>,
 }
 
 impl DeclSpecifiers {
+    /// For adding `Ident(..)` token, use `add_typename`.
+    /// Returns `Ok(())` if the added token is a decl specifier.
+    /// Returns `Err(())` if the added token is not a decl specifier.
+    /// If the added token **is** a decl specifier but there is an error (e.g. conflicting signness), reports error to `err_reporter` and returns `Ok(())`.
+    fn add_token(
+        &mut self,
+        err_reporter: &ErrorReporter,
+        token: &Spanned<Token>,
+    ) -> Result<(), ()> {
+        let span = token.span();
+        macro set_flag($flag:tt $(,)?) {{
+            match self.$flag {
+                Some(_) => {
+                    err_reporter.report(&Error::DuplicateSpecifier.to_spanned(span));
+                }
+                None => {
+                    self.$flag = Some(span);
+                }
+            }
+        }}
+        match token.inner() {
+            Token::Complex => {
+                err_reporter
+                    .report(&Error::Unsupported("_Complex is not supported").to_spanned(span));
+            }
+            Token::Imaginary => {
+                err_reporter
+                    .report(&Error::Unsupported("_Imaginary is not supported").to_spanned(span));
+            }
+            Token::Static => set_flag!(static_),
+            Token::Extern => set_flag!(extern_),
+            Token::Register => set_flag!(register),
+            Token::Auto => set_flag!(auto),
+            Token::Inline => set_flag!(inline),
+            Token::Char => set_flag!(char),
+            Token::Short => set_flag!(short),
+            Token::Int => set_flag!(int),
+            Token::Float => set_flag!(float),
+            Token::Double => set_flag!(double),
+            Token::Bool => set_flag!(bool),
+            Token::Const => set_flag!(const_),
+            Token::Restrict => set_flag!(restrict),
+            Token::Volatile => set_flag!(volatile),
+            Token::Long => match self.long0 {
+                None => {
+                    self.long0 = Some(span);
+                }
+                Some(_) => match self.long1 {
+                    Some(_) => {
+                        err_reporter.report(&Error::LongLongLongIsTooLong.to_spanned(span));
+                    }
+                    None => {
+                        self.long1 = Some(span);
+                    }
+                },
+            },
+            Token::Signed => match self.signness {
+                Some(s) => {
+                    let span = s.span();
+                    if s.into_inner() == Signness::Unsigned {
+                        err_reporter.report(&Error::ConflictingSignness.to_spanned(span));
+                    } else {
+                        fixme!("warning for duplicated `signed`")
+                    }
+                }
+                None => {
+                    self.signness = Some(Signness::Signed.to_spanned(span));
+                }
+            },
+            Token::Unsigned => match self.signness {
+                Some(s) => {
+                    let span = s.span();
+                    if s.into_inner() == Signness::Unsigned {
+                        err_reporter.report(&Error::ConflictingSignness.to_spanned(span));
+                    } else {
+                        fixme!("warning for duplicated `signed`")
+                    }
+                }
+                None => {
+                    self.signness = Some(Signness::Signed.to_spanned(span));
+                }
+            },
+            _ => return Err(()),
+        }
+        Ok(())
+    }
+    /// Ident must be made sure to be a typename from context, otherwise it should be treated as a normal ident expression, the ambiguous cases (e.g. `a * b`) would be dealt with later down the line.
+    fn add_typename(&mut self, typename: Spanned<InternStr<'static>>) {
+        match self.typename {
+            Some(name) => panic!("calling `add_typename` multiple times on one `DeclSpecifier` (existing typename {:?} @ {:?}", name, name.span()),
+            None => self.typename = Some(typename),
+        }
+    }
     /// For invalid combinations of specifiers, report the error and return a guess of what the user meant.
     fn try_into_var_speci(&self, err_reporter: &ErrorReporter) -> VarSpecifier {
         macro ensure_no($keyword:tt, $err:tt $(,)?) {
@@ -147,89 +239,12 @@ impl Parser {
         let start_span = prev_span;
         // Parse decl specifiers.
         let mut decl_speci = DeclSpecifiers::default();
-        macro set_flag($flag:tt $(,)?) {{
-            self.tokens.next();
-            match decl_speci.$flag {
-                Some(_) => {
-                    self.err_reporter
-                        .report(&Error::DuplicateSpecifier.to_spanned(prev_span));
-                }
-                None => {
-                    decl_speci.$flag = Some(prev_span);
-                }
-            }
-        }}
-        while let Some(token) = self.expect_peek_token(prev_span) {
-            prev_span = token.span();
-            match token.inner() {
-                Token::Static => set_flag!(static_),
-                Token::Extern => set_flag!(extern_),
-                Token::Register => set_flag!(register),
-                Token::Auto => set_flag!(auto),
-                Token::Inline => set_flag!(inline),
-                Token::Char => set_flag!(char),
-                Token::Short => set_flag!(short),
-                Token::Int => set_flag!(int),
-                Token::Float => set_flag!(float),
-                Token::Double => set_flag!(double),
-                Token::Bool => set_flag!(bool),
-                Token::Complex => set_flag!(complex),
-                Token::Imaginary => set_flag!(imaginary),
-                Token::Const => set_flag!(const_),
-                Token::Restrict => set_flag!(restrict),
-                Token::Volatile => set_flag!(volatile),
-                Token::Long => {
-                    self.tokens.next();
-                    match decl_speci.long0 {
-                        Some(_) => match decl_speci.long1 {
-                            Some(_) => {
-                                self.err_reporter
-                                    .report(&Error::LongLongLongIsTooLong.to_spanned(prev_span));
-                            }
-                            None => {
-                                decl_speci.long1 = Some(prev_span);
-                            }
-                        },
-                        None => {
-                            decl_speci.long0 = Some(prev_span);
-                        }
-                    }
-                }
-                Token::Signed => {
-                    self.tokens.next();
-                    match decl_speci.signness {
-                        Some(s) => {
-                            let span = s.span();
-                            if s.into_inner() == Signness::Unsigned {
-                                self.err_reporter
-                                    .report(&Error::ConflictingSignness.to_spanned(span));
-                            } else {
-                                fixme!("warning for duplicated `signed`")
-                            }
-                        }
-                        None => {
-                            decl_speci.signness = Some(Signness::Signed.to_spanned(prev_span));
-                        }
-                    }
-                }
-                Token::Unsigned => {
-                    self.tokens.next();
-                    match decl_speci.signness {
-                        Some(s) => {
-                            let span = s.span();
-                            if s.into_inner() == Signness::Unsigned {
-                                self.err_reporter
-                                    .report(&Error::ConflictingSignness.to_spanned(span));
-                            } else {
-                                fixme!("warning for duplicated `signed`")
-                            }
-                        }
-                        None => {
-                            decl_speci.signness = Some(Signness::Signed.to_spanned(prev_span));
-                        }
-                    }
-                }
-                _ => break,
+        while let Some(token) = self.tokens.peek() {
+            if decl_speci.add_token(&self.err_reporter, token).is_ok() {
+                prev_span = token.span();
+                self.tokens.next();
+            } else {
+                break;
             }
         }
         decl_speci.to_spanned(start_span.join(prev_span))
@@ -249,27 +264,59 @@ impl Parser {
                     .report(&Error::InvalidSignnessFlag.to_spanned(signness.span()));
             }
         }
-        if let Some(span) = decl_speci.complex {
-            self.err_reporter
-                .report(&Error::Unsupported("_Complex is not supported").to_spanned(span));
-        } else if let Some(span) = decl_speci.imaginary {
-            self.err_reporter
-                .report(&Error::Unsupported("_Imaginary is not supported").to_spanned(span));
+        macro ensure_no($speci:tt, $err:tt $(,)?) {
+            if let Some(span) = decl_speci.$speci {
+                self.err_reporter.report(&Error::$err.to_spanned(span));
+            }
         }
         // TODO: more accurate span.
-        if decl_speci.char.is_some() {
+        // TODO: ensure no conflicting types.
+        if let Some(typename) = decl_speci.typename {
+            ensure_no_signness!();
+            ensure_no!(char, ConflictingTypeSpecifier);
+            ensure_no!(short, ConflictingTypeSpecifier);
+            ensure_no!(int, ConflictingTypeSpecifier);
+            ensure_no!(short, ConflictingTypeSpecifier);
+            ensure_no!(long0, ConflictingTypeSpecifier);
+            ensure_no!(float, ConflictingTypeSpecifier);
+            ensure_no!(double, ConflictingTypeSpecifier);
+            ensure_no!(bool, ConflictingTypeSpecifier);
+            TyKind::Typename(typename.into_inner())
+        } else if decl_speci.char.is_some() {
+            ensure_no!(short, ConflictingTypeSpecifier);
+            ensure_no!(int, ConflictingTypeSpecifier);
+            ensure_no!(short, ConflictingTypeSpecifier);
+            ensure_no!(long0, ConflictingTypeSpecifier);
+            ensure_no!(float, ConflictingTypeSpecifier);
+            ensure_no!(double, ConflictingTypeSpecifier);
+            ensure_no!(bool, ConflictingTypeSpecifier);
             TyKind::Int(signness!(), IntSize::_8)
         } else if decl_speci.short.is_some() {
+            ensure_no!(int, ConflictingTypeSpecifier);
+            ensure_no!(long0, ConflictingTypeSpecifier);
+            ensure_no!(float, ConflictingTypeSpecifier);
+            ensure_no!(double, ConflictingTypeSpecifier);
+            ensure_no!(bool, ConflictingTypeSpecifier);
             TyKind::Int(signness!(), IntSize::_16)
         } else if decl_speci.int.is_some() {
+            ensure_no!(long0, ConflictingTypeSpecifier);
+            ensure_no!(float, ConflictingTypeSpecifier);
+            ensure_no!(double, ConflictingTypeSpecifier);
+            ensure_no!(bool, ConflictingTypeSpecifier);
             TyKind::Int(signness!(), IntSize::_32)
         } else if decl_speci.long0.is_some() {
+            ensure_no!(float, ConflictingTypeSpecifier);
+            ensure_no!(double, ConflictingTypeSpecifier);
+            ensure_no!(bool, ConflictingTypeSpecifier);
             TyKind::Int(signness!(), IntSize::_64)
         } else if decl_speci.float.is_some() {
+            ensure_no!(double, ConflictingTypeSpecifier);
+            ensure_no!(bool, ConflictingTypeSpecifier);
             ensure_no_signness!();
             TyKind::Float(FloatSize::_32)
         } else if decl_speci.double.is_some() {
             ensure_no_signness!();
+            ensure_no!(bool, ConflictingTypeSpecifier);
             TyKind::Float(FloatSize::_64)
         } else if decl_speci.bool.is_some() {
             ensure_no_signness!();
@@ -486,11 +533,13 @@ impl Parser {
         Some(args)
     }
 
-    /// Parse an entire decl statement.
-    fn parse_decl_stmt(&mut self, prev_span: Span) -> Option<Spanned<Expr>> {
-        let decl_speci = self.parse_decl_speci(prev_span);
-
-        let ty = self.deduce_ty_speci(&decl_speci);
+    /// Parse the content after declaration specifiers.
+    fn parse_decl_content(
+        &mut self,
+        prev_span: Span,
+        decl_speci: &Spanned<DeclSpecifiers>,
+    ) -> Option<Spanned<Expr>> {
+        let ty = self.deduce_ty_speci(decl_speci);
         let ty = self.parse_ptr_decl(ty);
         let ty_span = ty.span();
         let (ident, ident_span) = expect_ident!(self, ty_span)?;
@@ -541,6 +590,12 @@ impl Parser {
         }
     }
 
+    /// Parse an entire decl statement.
+    fn parse_decl(&mut self, prev_span: Span) -> Option<Spanned<Expr>> {
+        let decl_speci = self.parse_decl_speci(prev_span);
+        self.parse_decl_content(prev_span, &decl_speci)
+    }
+
     fn parse_expr(&mut self, prev_span: Span, _prec: u16) -> Option<Spanned<Expr>> {
         let token = self.expect_peek_token(prev_span)?;
         let span = token.span();
@@ -558,8 +613,19 @@ impl Parser {
                         self.tokens.next();
                         Some(Expr::Labal(s).to_spanned(span))
                     }
-                    Some(t) if matches!(t.inner(), &Token::Ident(..)) => {
-                        todo!();
+                    Some(next_ident) if next_ident.is_ident() => {
+                        let mut decl_speci = DeclSpecifiers::default();
+                        decl_speci.add_typename(s.to_spanned(span));
+                        let span = span.join(next_ident.span());
+                        self.parse_decl_content(span, &decl_speci.to_spanned(span))
+                    }
+                    Some(t) if t.is_decl_speci() => {
+                        let mut decl_speci = DeclSpecifiers::default();
+                        decl_speci.add_typename(s.to_spanned(span));
+                        decl_speci.add_token(&self.err_reporter, t).unwrap();
+                        let span1 = t.span();
+                        self.tokens.next();
+                        self.parse_decl_content(span1, &decl_speci.to_spanned(span.join(span1)))
                     }
                     _ => Some(Expr::Ident(s).to_spanned(span)),
                 }
@@ -600,7 +666,7 @@ impl Parser {
             | Token::Register
             | Token::Extern
             | Token::Static
-            | Token::Inline => self.parse_decl_stmt(span),
+            | Token::Inline => self.parse_decl(span),
             Token::Break => {
                 self.tokens.next();
                 Some(Expr::Break.to_spanned(span))

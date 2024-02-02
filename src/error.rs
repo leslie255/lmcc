@@ -45,6 +45,7 @@ pub enum Error<'a> {
     InvalidStorageClass,
     ConflictingStorageClass,
     DuplicateSpecifier,
+    ConflictingTypeSpecifier,
     LongLongLongIsTooLong,
     InlineInVarDecl,
     IllegalArrLen,

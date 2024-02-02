@@ -240,6 +240,7 @@ impl Parser {
     }
 
     /// Parse decl specifiers.
+    #[must_use]
     fn parse_decl_speci(
         &mut self,
         prev_span: Span,
@@ -626,7 +627,7 @@ impl Parser {
                         let mut decl_speci = DeclSpecifiers::default();
                         decl_speci.add_typename(s.to_spanned(span));
                         let span = span.join(next_ident.span());
-                        self.parse_decl_speci(span, decl_speci);
+                        let decl_speci = self.parse_decl_speci(span, decl_speci);
                         self.parse_decl_content(span, &decl_speci.to_spanned(span))
                     }
                     Some(t) if t.is_decl_speci() => {
@@ -635,7 +636,7 @@ impl Parser {
                         decl_speci.add_token(&self.err_reporter, t).unwrap();
                         let span1 = t.span();
                         self.tokens.next();
-                        self.parse_decl_speci(span, decl_speci);
+                        let decl_speci = self.parse_decl_speci(span, decl_speci);
                         self.parse_decl_content(span1, &decl_speci.to_spanned(span.join(span1)))
                     }
                     _ => Some(Expr::Ident(s).to_spanned(span)),

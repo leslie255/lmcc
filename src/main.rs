@@ -38,7 +38,7 @@ fn main() {
     let token_stream = TokenStream::new(path, source, err_reporter.clone(), file_reader.clone());
     let ast_parser = Parser::new(err_reporter.clone(), token_stream.peekable());
     for expr in ast_parser {
-        dbg!(expr);
+        println!("{expr:?}");
     }
     err_reporter.exit_if_has_error();
 }

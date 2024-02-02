@@ -498,7 +498,7 @@ impl TokenStream {
         }
     }
 
-    fn parse_string_escape(&mut self, i: SourceIdx) -> Result<u8, Spanned<Error>> {
+    fn parse_string_escape(&mut self, i: SourceIdx) -> Result<u8, Spanned<Error<'static>>> {
         let escape_char = self
             .chars
             .next()
@@ -540,7 +540,7 @@ impl TokenStream {
     fn take_char_literal(
         &mut self,
         start_idx: SourceIdx,
-    ) -> Result<Spanned<Token>, Spanned<Error>> {
+    ) -> Result<Spanned<Token>, Spanned<Error<'static>>> {
         match self
             .chars
             .next()
@@ -576,7 +576,7 @@ impl TokenStream {
         }
     }
 
-    fn take_str_literal(&mut self, start_idx: SourceIdx) -> Result<Spanned<Token>, Spanned<Error>> {
+    fn take_str_literal(&mut self, start_idx: SourceIdx) -> Result<Spanned<Token>, Spanned<Error<'static>>> {
         let mut bytes = Vec::<u8>::new();
         let mut end_idx = start_idx;
         if self.chars.peek().is_none() {
@@ -596,7 +596,7 @@ impl TokenStream {
         Ok(Token::StrLiteral(bytes.into()).to_spanned((self.path, start_idx, end_idx)))
     }
 
-    fn parse_macro(&mut self, start_idx: SourceIdx) -> Result<(), Spanned<Error>> {
+    fn parse_macro(&mut self, start_idx: SourceIdx) -> Result<(), Spanned<Error<'static>>> {
         let keyword_start = self
             .chars
             .peek()

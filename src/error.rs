@@ -18,7 +18,8 @@ use crate::{
 pub type CowStr = Cow<'static, str>;
 
 #[derive(Clone, Debug)]
-pub enum Error {
+pub enum Error<'a> {
+    Todo(&'a str),
     InvalidNumberFormat,
     EofInStringLiteral,
     InvalidStringEscape,
@@ -33,6 +34,7 @@ pub enum Error {
     ExpectCharLiteral,
     ExpectStrLiteral,
     ExpectToken(Token),
+    ExpectTokens(&'a [Token]),
     UseOfAuto,
     RestrictOnNonPointer,
     ConflictingSignness,
@@ -41,9 +43,12 @@ pub enum Error {
     InvalidStorageClassOnFunc,
     ConflictingStorageClass,
     DuplicateSpecifier,
+    IllegalArrLen,
+    ArrInFuncArg,
+    ArrAsFuncRet,
 }
 
-impl Error {
+impl Error<'_> {
     fn description<'a>(&'a self) -> ErrorDescription<'a> {
         ErrorDescription(self)
     }
@@ -252,7 +257,7 @@ impl<T: Display> Display for Quote<T> {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ErrorDescription<'a>(&'a Error);
+struct ErrorDescription<'a>(&'a Error<'a>);
 impl Display for ErrorDescription<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", &self.0)
@@ -262,7 +267,7 @@ impl Display for ErrorDescription<'_> {
 #[derive(Clone, Debug)]
 pub struct ErrorFormatter<'a, 'f> {
     sources: &'f FileReader,
-    error: &'a Spanned<Error>,
+    error: &'a Spanned<Error<'a>>,
 }
 
 impl<'a, 'f> ErrorFormatter<'a, 'f> {
@@ -358,7 +363,7 @@ impl<'a, 'f> Display for ErrorFormatter<'a, 'f> {
 
 #[derive(Clone, Debug)]
 pub struct UnspannedErrorFormatter<'a> {
-    error: &'a Error,
+    error: &'a Error<'a>,
 }
 
 impl<'a> UnspannedErrorFormatter<'a> {

@@ -2,7 +2,7 @@
 
 use std::{mem::MaybeUninit, sync::Mutex};
 
-use ast::Parser;
+use parser::Parser;
 use intern_str::{InternStr, MaybeOwnedStr, StringArena};
 
 use crate::{error::ErrorReporter, file_reader::FileReader, token::TokenStream};
@@ -11,6 +11,7 @@ mod ast;
 mod error;
 mod file_reader;
 mod intern_str;
+mod parser;
 mod source_string;
 mod token;
 mod utils;
@@ -33,7 +34,8 @@ fn main() {
         let mut args = std::env::args();
         args.next().unwrap();
         args.next().unwrap()
-    }.leak();
+    }
+    .leak();
     let source = file_reader.read_file(path).unwrap();
     let token_stream = TokenStream::new(path, source, err_reporter.clone(), file_reader.clone());
     let ast_parser = Parser::new(err_reporter.clone(), token_stream.peekable());

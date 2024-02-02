@@ -1,1 +1,1 @@
-int x(register int x)
+static const volatile int *const volatile restrict f(register int x)

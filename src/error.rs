@@ -41,7 +41,7 @@ pub enum Error<'a> {
     RestrictOnNonPointer,
     ConflictingSignness,
     InvalidSignnessFlag,
-    ExpectTyExpr,
+    ExpectTy,
     InvalidStorageClass,
     ConflictingStorageClass,
     DuplicateSpecifier,

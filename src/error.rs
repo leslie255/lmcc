@@ -20,6 +20,9 @@ pub type CowStr = Cow<'static, str>;
 #[derive(Clone, Debug)]
 pub enum Error<'a> {
     Todo(&'a str),
+    /// Unlike `Todo`, the string have to be one sentence.
+    /// e.g. "_Complex is not supported"
+    Unsupported(&'a str),
     InvalidNumberFormat,
     EofInStringLiteral,
     InvalidStringEscape,
@@ -35,14 +38,15 @@ pub enum Error<'a> {
     ExpectStrLiteral,
     ExpectToken(Token),
     ExpectTokens(&'a [Token]),
-    UseOfAuto,
     RestrictOnNonPointer,
     ConflictingSignness,
     InvalidSignnessFlag,
     ExpectTyExpr,
-    InvalidStorageClassOnFunc,
+    InvalidStorageClass,
     ConflictingStorageClass,
     DuplicateSpecifier,
+    LongLongLongIsTooLong,
+    InlineInVarDecl,
     IllegalArrLen,
     ArrInFuncArg,
     ArrAsFuncRet,

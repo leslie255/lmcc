@@ -46,7 +46,6 @@ struct DeclSpecifiers {
 }
 
 impl DeclSpecifiers {
-    /// For adding `Ident(..)` token, use `add_typename`.
     /// Returns `Ok(())` if the added token is a decl specifier.
     /// Returns `Err(())` if the added token is not a decl specifier.
     /// If the added token **is** a decl specifier but there is an error (e.g. conflicting signness), reports error to `err_reporter` and returns `Ok(())`.
@@ -89,6 +88,14 @@ impl DeclSpecifiers {
             Token::Const => set_flag!(const_),
             Token::Restrict => set_flag!(restrict),
             Token::Volatile => set_flag!(volatile),
+            &Token::Ident(typename) => match self.typename {
+                Some(_) => {
+                    err_reporter.report(&Error::DuplicateSpecifier.to_spanned(span));
+                }
+                None => {
+                    self.typename = Some(typename.to_spanned(span));
+                }
+            },
             Token::Long => match self.long0 {
                 None => {
                     self.long0 = Some(span);

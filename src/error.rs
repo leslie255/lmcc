@@ -48,7 +48,6 @@ pub enum Error<'a> {
     LongLongLongIsTooLong,
     InlineInVarDecl,
     IllegalArrLen,
-    ArrInFuncArg,
     ArrAsFuncRet,
 }
 

@@ -1,9 +1,9 @@
-#![feature(decl_macro, str_internals, result_option_inspect)]
+#![feature(decl_macro, result_option_inspect)]
 
 use std::{mem::MaybeUninit, sync::Mutex};
 
-use parser::Parser;
 use intern_str::{InternStr, MaybeOwnedStr, StringArena};
+use parser::Parser;
 
 use crate::{error::ErrorReporter, file_reader::FileReader, token::TokenStream};
 

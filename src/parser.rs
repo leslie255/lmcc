@@ -16,7 +16,6 @@ pub struct Parser {
     tokens: Peekable<TokenStream>,
 }
 
-/// Only works in `parse_` functions (`(self: &mut Parser, ...) -> Option<...>`).
 /// Returns `Some((InternStr<'static>, Span))` if is an identifier.
 /// Returns `None` if not an ident.
 macro expect_ident($self:expr, $prev_span:expr) {{
@@ -454,11 +453,6 @@ impl Parser {
                     &Token::Ident(ident) => {
                         self.tokens.next();
                         ty = self.parse_arr_decl(ty)?;
-                        if ty.is_arr() {
-                            self.err_reporter
-                                .report(&Error::ArrInFuncArg.to_spanned(ty.span()));
-                            ty = ty.map(|t| t.decayed());
-                        }
                         ident
                     }
                     _ => {
@@ -489,29 +483,19 @@ impl Parser {
                 }
             }
         }
-        let token = self.tokens.peek();
-        match token {
-            Some(t) if t.inner() == &Token::BraceOpen => {
-                todo!("parse function body");
-            }
-            Some(..) | None => Some(args),
-        }
+        Some(args)
     }
 
     /// Parse an entire decl statement.
     fn parse_decl_stmt(&mut self, prev_span: Span) -> Option<Spanned<Expr>> {
-        // Parse decl specifiers.
         let decl_speci = self.parse_decl_speci(prev_span);
 
-        // Parse type specifiers.
         let ty = self.deduce_ty_speci(&decl_speci);
         let ty = self.parse_ptr_decl(ty);
         let ty_span = ty.span();
         let (ident, ident_span) = expect_ident!(self, ty_span)?;
-        // Parse array decl.
         let ty = self.parse_arr_decl(ty)?;
 
-        // Parse RHS.
         match self.tokens.peek() {
             Some(t) if t.inner() == &Token::Eq => {
                 self.tokens.next();
@@ -534,15 +518,21 @@ impl Parser {
                 };
                 self.tokens.next();
                 let args = self.parse_fn_decl_args(ident_span)?;
-                Some(
-                    Expr::FuncDef(
-                        decl_speci.try_into_func_speci(&self.err_reporter),
-                        ident,
-                        Signature { ret_ty, args },
-                        None,
-                    )
-                    .to_spanned(ty_span.join(prev_span)),
-                )
+                let token = self.tokens.peek();
+                match token {
+                    Some(t) if t.inner() == &Token::BraceOpen => {
+                        todo!("parse function body");
+                    }
+                    Some(..) | None => Some(
+                        Expr::FuncDef(
+                            decl_speci.try_into_func_speci(&self.err_reporter),
+                            ident,
+                            Signature { ret_ty, args },
+                            None,
+                        )
+                        .to_spanned(ty_span.join(prev_span)),
+                    ),
+                }
             }
             _ => {
                 let var_specs = decl_speci.try_into_var_speci(&self.err_reporter);

@@ -261,13 +261,16 @@ impl Parser {
                 end_span = token.span();
                 self.tokens.next();
             } else if let &Token::Ident(s) = token.inner() {
-                let span = token.span();
-                decl_speci.add_typename(s.to_spanned(span));
-                self.tokens.next();
-                match self.tokens.peek() {
-                    Some(t) if t.is_decl_speci() => continue,
-                    _ => break,
-                }
+                break;
+                //let span = token.span();
+                //decl_speci.add_typename(s.to_spanned(span));
+                //self.tokens.next();
+                //match self.tokens.peek() {
+                //    Some(t) if t.is_decl_speci() => continue,
+                //    _ => break,
+                //}
+            } else {
+                break;
             }
         }
         if decl_speci.maybe_typename {

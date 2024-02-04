@@ -4,11 +4,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::{
-    error::Spanned,
-    intern_str::InternStr,
-    token::NumValue,
-};
+use crate::{error::Spanned, intern_str::InternStr, token::NumValue};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -45,6 +41,14 @@ pub enum Expr {
     Goto(InternStr<'static>),
     Break,
     Continue,
+}
+impl Expr {
+    pub fn omits_semicolon(&self) -> bool {
+        match self {
+            Expr::Error | Expr::FuncDef(..) | Expr::Labal(..) => true,
+            _ => false,
+        }
+    }
 }
 #[derive(Clone, PartialEq, Eq)]
 pub enum TyKind {

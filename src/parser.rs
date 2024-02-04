@@ -10,6 +10,14 @@ use crate::{
 
 use super::token::{Token, TokenStream};
 
+// Cases of declaration statements unable to handle:
+// - When typename follows a declaration specifier:
+//      static T x
+// - Functions returning a pointer to a typename
+//      T * f(int x)
+// - List decl:
+//     int f(int), *x, y[10], z = 10;
+
 #[derive(Debug, Clone)]
 pub struct Parser {
     err_reporter: Rc<ErrorReporter>,
@@ -37,7 +45,11 @@ struct DeclSpecifiers {
     float: Option<Span>,
     double: Option<Span>,
     bool: Option<Span>,
+
+    // --- type name ---
     typename: Option<Spanned<InternStr<'static>>>,
+    /// If a type name is the last added token, parser cannot be sure if its a typename or a part of decl content.
+    maybe_typename: bool,
 
     // --- type qualifiers ---
     const_: Option<Span>,
@@ -49,11 +61,14 @@ impl DeclSpecifiers {
     /// Returns `Ok(())` if the added token is a decl specifier.
     /// Returns `Err(())` if the added token is not a decl specifier.
     /// If the added token **is** a decl specifier but there is an error (e.g. conflicting signness), reports error to `err_reporter` and returns `Ok(())`.
+    /// Use `add_typename` for adding a typename.
+    /// Tokens and typenames must be added in order of their appearance in source.
     fn add_token(
         &mut self,
         err_reporter: &ErrorReporter,
         token: &Spanned<Token>,
     ) -> Result<(), ()> {
+        self.maybe_typename = false;
         let span = token.span();
         macro set_flag($flag:tt $(,)?) {{
             match self.$flag {
@@ -88,14 +103,6 @@ impl DeclSpecifiers {
             Token::Const => set_flag!(const_),
             Token::Restrict => set_flag!(restrict),
             Token::Volatile => set_flag!(volatile),
-            &Token::Ident(typename) => match self.typename {
-                Some(_) => {
-                    err_reporter.report(&Error::DuplicateSpecifier.to_spanned(span));
-                }
-                None => {
-                    self.typename = Some(typename.to_spanned(span));
-                }
-            },
             Token::Long => match self.long0 {
                 None => {
                     self.long0 = Some(span);
@@ -141,6 +148,7 @@ impl DeclSpecifiers {
     }
     /// Ident must be made sure to be a typename from context, otherwise it should be treated as a normal ident expression, the ambiguous cases (e.g. `a * b`) would be dealt with later down the line.
     fn add_typename(&mut self, typename: Spanned<InternStr<'static>>) {
+        self.maybe_typename = true;
         match self.typename {
             Some(name) => panic!("calling `add_typename` multiple times on one `DeclSpecifier` (existing typename {:?} @ {:?}", name, name.span()),
             None => self.typename = Some(typename),
@@ -240,6 +248,7 @@ impl Parser {
     }
 
     /// Parse decl specifiers.
+    /// Sometimes after parsing the decl specifiers the next token is also taken.
     #[must_use]
     fn parse_decl_speci(
         &mut self,
@@ -251,8 +260,19 @@ impl Parser {
             if decl_speci.add_token(&self.err_reporter, token).is_ok() {
                 end_span = token.span();
                 self.tokens.next();
-            } else {
-                break;
+            } else if let &Token::Ident(s) = token.inner() {
+                let span = token.span();
+                decl_speci.add_typename(s.to_spanned(span));
+                self.tokens.next();
+                match self.tokens.peek() {
+                    Some(t) if t.is_decl_speci() => continue,
+                    _ => break,
+                }
+            }
+        }
+        if decl_speci.maybe_typename {
+            if self.tokens.peek().is_some_and(|t| t.inner() == &Token::Mul) {
+                decl_speci.maybe_typename = false;
             }
         }
         decl_speci.to_spanned(prev_span.join(end_span))
@@ -278,19 +298,28 @@ impl Parser {
             }
         }
         // TODO: more accurate span.
-        // TODO: ensure no conflicting types.
-        if let Some(typename) = decl_speci.typename {
-            ensure_no_signness!();
-            ensure_no!(char, ConflictingTypeSpecifier);
-            ensure_no!(short, ConflictingTypeSpecifier);
-            ensure_no!(int, ConflictingTypeSpecifier);
-            ensure_no!(short, ConflictingTypeSpecifier);
-            ensure_no!(long0, ConflictingTypeSpecifier);
-            ensure_no!(float, ConflictingTypeSpecifier);
-            ensure_no!(double, ConflictingTypeSpecifier);
-            ensure_no!(bool, ConflictingTypeSpecifier);
-            TyKind::Typename(typename.into_inner())
-        } else if decl_speci.char.is_some() {
+        'a: {
+            if let Some(typename) = decl_speci.typename {
+                if decl_speci.maybe_typename {
+                    if self.tokens.peek().is_some_and(|t| !t.is_ident()) {
+                        break 'a;
+                    }
+                }
+                ensure_no_signness!();
+                ensure_no!(char, ConflictingTypeSpecifier);
+                ensure_no!(short, ConflictingTypeSpecifier);
+                ensure_no!(int, ConflictingTypeSpecifier);
+                ensure_no!(short, ConflictingTypeSpecifier);
+                ensure_no!(long0, ConflictingTypeSpecifier);
+                ensure_no!(float, ConflictingTypeSpecifier);
+                ensure_no!(double, ConflictingTypeSpecifier);
+                ensure_no!(bool, ConflictingTypeSpecifier);
+                return TyKind::Typename(typename.into_inner())
+                    .to_ty(decl_speci.const_.is_some(), decl_speci.volatile.is_some())
+                    .to_spanned(decl_speci.span());
+            }
+        }
+        if decl_speci.char.is_some() {
             ensure_no!(short, ConflictingTypeSpecifier);
             ensure_no!(int, ConflictingTypeSpecifier);
             ensure_no!(short, ConflictingTypeSpecifier);
@@ -555,6 +584,7 @@ impl Parser {
         let ty = self.parse_arr_decl(ty)?;
 
         match self.tokens.peek() {
+            Some(t) if t.inner() == &Token::Comma => todo!("list decls"),
             Some(t) if t.inner() == &Token::Eq => {
                 self.tokens.next();
                 let var_specs = decl_speci.try_into_var_speci(&self.err_reporter);
@@ -565,7 +595,6 @@ impl Parser {
                         .to_spanned(ty_span.join(rhs_span)),
                 )
             }
-            Some(t) if t.inner() == &Token::Comma => todo!(),
             Some(t) if t.inner() == &Token::ParenOpen => {
                 let ret_ty = if ty.is_arr() {
                     self.err_reporter
@@ -577,18 +606,22 @@ impl Parser {
                 self.tokens.next();
                 let args = self.parse_fn_decl_args(ident_span)?;
                 let token = self.tokens.peek();
+                let func_speci = decl_speci.try_into_func_speci(&self.err_reporter);
+                let sig = Signature { ret_ty, args };
                 match token {
                     Some(t) if t.inner() == &Token::BraceOpen => {
-                        todo!("parse function body");
-                    }
-                    Some(..) | None => Some(
-                        Expr::FuncDef(
-                            decl_speci.try_into_func_speci(&self.err_reporter),
-                            ident,
-                            Signature { ret_ty, args },
-                            None,
+                        let span = t.span();
+                        self.tokens.next();
+                        let (body, span) = self.parse_block(span)?.into_pair();
+                        Some(
+                            Expr::FuncDef(func_speci, ident, sig, Some(body))
+                                .to_spanned(ty_span.join(span)),
                         )
-                        .to_spanned(ty_span.join(prev_span)),
+                    }
+                    Some(t) if t.inner() == &Token::Comma => todo!("list decls"),
+                    Some(..) | None => Some(
+                        Expr::FuncDef(func_speci, ident, sig, None)
+                            .to_spanned(ty_span.join(prev_span)),
                     ),
                 }
             }
@@ -604,6 +637,39 @@ impl Parser {
         let decl_speci = DeclSpecifiers::default();
         let decl_speci = self.parse_decl_speci(prev_span, decl_speci);
         self.parse_decl_content(prev_span, &decl_speci)
+    }
+
+    /// Start with `{` token already consumed.
+    fn parse_block(&mut self, mut prev_span: Span) -> Option<Spanned<Vec<Spanned<Expr>>>> {
+        let start_span = prev_span;
+        let mut body = Vec::<Spanned<Expr>>::new();
+        loop {
+            let (token, span) = self.expect_peek_token(prev_span)?.as_pair();
+            prev_span = span;
+            match token {
+                Token::BraceClose => {
+                    self.tokens.next();
+                    break;
+                }
+                _ => {
+                    let expr = self.parse_expr(prev_span, 16)?;
+                    let omits_semicolon = expr.omits_semicolon();
+                    prev_span = expr.span();
+                    body.push(expr);
+                    if omits_semicolon {
+                        continue;
+                    }
+                    let (token, span) = self.expect_peek_token(prev_span)?.as_pair();
+                    if matches!(token, Token::Semicolon) {
+                        self.tokens.next();
+                    } else {
+                        self.err_reporter
+                            .report(&Error::MissingSemicolon.to_spanned(span));
+                    }
+                }
+            }
+        }
+        Some(body.to_spanned(start_span.join(prev_span)))
     }
 
     fn parse_expr(&mut self, prev_span: Span, _prec: u16) -> Option<Spanned<Expr>> {

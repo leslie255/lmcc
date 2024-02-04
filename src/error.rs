@@ -50,6 +50,7 @@ pub enum Error<'a> {
     InlineInVarDecl,
     IllegalArrLen,
     ArrAsFuncRet,
+    MissingSemicolon,
 }
 
 impl Error<'_> {

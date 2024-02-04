@@ -1,1 +1,3 @@
-T static const inline volatile *const volatile restrict f(const register long volatile unsigned long *const volatile restrict x)
+int main() {
+    static T *i;
+}

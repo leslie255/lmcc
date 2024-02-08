@@ -204,43 +204,6 @@ impl Debug for Token {
         }
     }
 }
-impl Token {
-    /// Is it a declaration specifier?
-    /// Returns `false` for identifiers.
-    /// Returns `false` for `typedef`.
-    pub const fn is_decl_speci(&self) -> bool {
-        match self {
-            Self::Auto
-            | Self::Char
-            | Self::Const
-            | Self::Double
-            | Self::Enum
-            | Self::Extern
-            | Self::Float
-            | Self::Inline
-            | Self::Int
-            | Self::Long
-            | Self::Register
-            | Self::Restrict
-            | Self::Short
-            | Self::Signed
-            | Self::Static
-            | Self::Struct
-            | Self::Typedef
-            | Self::Union
-            | Self::Unsigned
-            | Self::Void
-            | Self::Volatile
-            | Self::Bool
-            | Self::Complex
-            | Self::Imaginary => true,
-            _ => false,
-        }
-    }
-    pub const fn is_ident(&self) -> bool {
-        matches!(self, Self::Ident(..))
-    }
-}
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum NumValue {

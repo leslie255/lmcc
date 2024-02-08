@@ -7,6 +7,10 @@ use std::{
 
 use index_vec::IndexVec;
 
+use crate::intern_str::InternStr;
+
+pub type IdentStr = InternStr<'static>;
+
 pub macro match_into($val:expr, $pat:pat => $result:expr) {
     match $val {
         $pat => Some($result),

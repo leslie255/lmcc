@@ -6,14 +6,13 @@ use std::rc::Rc;
 
 use crate::error::{Error, ErrorReporter, Span, Spanned, ToSpanned};
 use crate::file_reader::FileReader;
-use crate::intern_str::InternStr;
 use crate::intern_string;
 use crate::source_string::{SourceCharIndices, SourceIdx, SourceString};
-use crate::utils::{derive_display_from_debug, match_into};
+use crate::utils::{derive_display_from_debug, match_into, IdentStr};
 
 #[derive(Clone, PartialEq)]
 pub enum Token {
-    Ident(InternStr<'static>),
+    Ident(IdentStr),
     NumLiteral(NumValue),
     StrLiteral(Rc<[u8]>),
     CharLiteral(u8),
@@ -282,7 +281,7 @@ impl From<f64> for NumValue {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MacroContent {
-    args: Vec<InternStr<'static>>,
+    args: Vec<IdentStr>,
     has_va_arg: bool,
     content: Vec<PpToken>,
 }
@@ -291,7 +290,7 @@ pub struct MacroContent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PpToken {
     Token(Token),
-    Slot(InternStr<'static>),
+    Slot(IdentStr),
     Stringify,
     Concat,
 }
@@ -301,7 +300,7 @@ pub struct TokenStream {
     path: &'static str,
     source: &'static SourceString,
     chars: Peekable<SourceCharIndices<'static>>,
-    pub macros: HashMap<InternStr<'static>, Option<MacroContent>>,
+    pub macros: HashMap<IdentStr, Option<MacroContent>>,
     macro_buffer: Vec<Token>,
     /// If `macro_buffer` isn't empty (meaning the tokenizer is in a macro), this is the location of the call site of the macro.
     current_macro_callsite: Span,

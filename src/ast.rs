@@ -4,13 +4,13 @@ use std::{
     rc::Rc,
 };
 
-use crate::{error::Spanned, intern_str::InternStr, token::NumValue};
+use crate::{error::Spanned, token::NumValue, utils::IdentStr};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     /// For propagating erors forward.
     Error,
-    Ident(InternStr<'static>),
+    Ident(IdentStr),
     NumLiteral(NumValue),
     CharLiteral(u8),
     StrLiteral(Rc<[u8]>),
@@ -22,23 +22,18 @@ pub enum Expr {
     InfixOp(Box<Spanned<Expr>>, InfixOpKind, Box<Spanned<Expr>>),
     InfixOpAssign(Box<Spanned<Expr>>, AssignOpKind, Box<Spanned<Expr>>),
     Assign(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
-    VarDecl(VarSpecifier, Spanned<Ty>, InternStr<'static>),
-    VarDeclInit(
-        VarSpecifier,
-        Spanned<Ty>,
-        InternStr<'static>,
-        Box<Spanned<Expr>>,
-    ),
+    VarDecl(VarSpecifier, Spanned<Ty>, IdentStr),
+    VarDeclInit(VarSpecifier, Spanned<Ty>, IdentStr, Box<Spanned<Expr>>),
     DeclList(Vec<DeclItem>),
     Return(Option<Box<Spanned<Expr>>>),
     FuncDef(
         FuncSpecifier,
-        InternStr<'static>,
+        IdentStr,
         Signature,
         Option<Vec<Spanned<Expr>>>,
     ),
-    Labal(InternStr<'static>),
-    Goto(InternStr<'static>),
+    Labal(IdentStr),
+    Goto(IdentStr),
     Break,
     Continue,
 }
@@ -57,10 +52,10 @@ pub enum TyKind {
     Bool,
     Ptr(Restrictness, Box<Ty>),
     FixedArr(Box<Ty>, u64),
-    Struct(InternStr<'static>),
-    Union(InternStr<'static>),
-    Enum(InternStr<'static>),
-    Typename(InternStr<'static>),
+    Struct(IdentStr),
+    Union(IdentStr),
+    Enum(IdentStr),
+    Typename(IdentStr),
     Void,
     Error,
 }
@@ -143,6 +138,7 @@ pub enum VarSpecifier {
     /// `Auto` is for when the user specified `auto`.
     /// This is useful for error reporting when the user mistakes `auto` for `auto` in C++/C23.
     Auto,
+    Typedef,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkageSpecifier {
@@ -255,7 +251,7 @@ impl AssignOpKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Signature {
     pub ret_ty: Spanned<Ty>,
-    pub args: Vec<(Ty, Option<InternStr<'static>>)>,
+    pub args: Vec<(Ty, Option<IdentStr>)>,
 }
 
 impl Debug for FuncSpecifier {
@@ -331,6 +327,6 @@ impl Debug for Ty {
 /// Used in decl list.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeclItem {
-    Var(VarSpecifier, Spanned<Ty>, InternStr<'static>),
-    Func(FuncSpecifier, Spanned<Ty>, Signature, InternStr<'static>),
+    Var(VarSpecifier, Spanned<Ty>, IdentStr),
+    Func(FuncSpecifier, Spanned<Ty>, Signature, IdentStr),
 }

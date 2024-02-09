@@ -193,7 +193,7 @@ impl DeclSpecifiers {
             ensure_no!(extern_, ConflictingStorageClass);
             LinkageSpecifier::Static
         } else {
-            LinkageSpecifier::Unspecified
+            LinkageSpecifier::Default
         };
         FuncSpecifier {
             inline: self.inline.is_some(),
@@ -653,15 +653,14 @@ impl Parser {
                     let omits_semicolon = expr.omits_semicolon();
                     prev_span = expr.span();
                     body.push(expr);
-                    if omits_semicolon {
-                        continue;
-                    }
-                    let (token, span) = self.expect_peek_token(prev_span)?.as_pair();
-                    if matches!(token, Token::Semicolon) {
+                    let token = self.tokens.peek();
+                    if token.is_some_and(|t| t.inner() == &Token::Semicolon) {
                         self.tokens.next();
                     } else {
-                        self.err_reporter
-                            .report(&Error::MissingSemicolon.to_spanned(span));
+                        if !omits_semicolon {
+                            self.err_reporter
+                                .report(&Error::MissingSemicolon.to_spanned(span));
+                        }
                     }
                 }
             }
@@ -786,7 +785,6 @@ impl Parser {
                     }
                     None => Some(Expr::Return(None).to_spanned(span)),
                     Some(..) => {
-                        self.tokens.next();
                         let operand = self.parse_expr(span, 16)?;
                         let operand_span = operand.span();
                         Some(
@@ -873,7 +871,7 @@ impl Iterator for Parser {
         let expr = self.parse_expr(span, 16)?;
         let span = expr.span();
         let token = self.tokens.peek();
-        if token.is_some_and(|t|t.inner() == &Token::Semicolon) {
+        if token.is_some_and(|t| t.inner() == &Token::Semicolon) {
             self.tokens.next();
         } else {
             if !expr.omits_semicolon() {

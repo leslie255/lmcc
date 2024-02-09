@@ -4,7 +4,11 @@ use std::{
     rc::Rc,
 };
 
-use crate::{error::Spanned, token::NumValue, utils::IdentStr};
+use crate::{
+    error::Spanned,
+    token::NumValue,
+    utils::{DoInBetween, IdentStr},
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -142,7 +146,7 @@ pub enum VarSpecifier {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkageSpecifier {
-    Unspecified,
+    Default,
     Static,
     Extern,
 }
@@ -248,16 +252,50 @@ impl AssignOpKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Signature {
     pub ret_ty: Spanned<Ty>,
     pub args: Vec<(Ty, Option<IdentStr>)>,
 }
 
+/// Used in decl list.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeclItem {
+    Var(VarSpecifier, Spanned<Ty>, IdentStr, Option<Expr>),
+    Func(FuncSpecifier, Spanned<Ty>, Signature, IdentStr, Option<Vec<Spanned<Expr>>>),
+}
+
+impl Debug for Signature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            write!(f, "{:?} (", self.ret_ty)?;
+        } else {
+            write!(f, "{:?}(", self.ret_ty)?;
+        }
+        let f = self.args.iter().try_do_in_between(
+            f,
+            |f| {
+                if f.alternate() {
+                    write!(f, ", ")
+                } else {
+                    write!(f, ",")
+                }
+            },
+            |f, (ty, name)| {
+                match name {
+                    Some(name) => write!(f, "{ty:?} {name:?}"),
+                    None => write!(f, "{ty:?}"),
+                }
+            },
+        )?;
+        write!(f, ")")
+    }
+}
+
 impl Debug for FuncSpecifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.linkage {
-            LinkageSpecifier::Unspecified => write!(f, "linkage(auto)")?,
+            LinkageSpecifier::Default => write!(f, "linkage(default)")?,
             LinkageSpecifier::Static => write!(f, "static")?,
             LinkageSpecifier::Extern => write!(f, "extern")?,
         }
@@ -314,19 +352,12 @@ impl Debug for Ty {
                 },
             ),
             TyKind::FixedArr(ty, len) => write!(f, "{}{}{ty:?}[{len:?}]", const_!(), volatile!()),
-            TyKind::Struct(name) => write!(f, "{}{}struct {name}", const_!(), volatile!()),
-            TyKind::Union(name) => write!(f, "{}{}union {name}", const_!(), volatile!()),
-            TyKind::Enum(name) => write!(f, "{}{}enum {name}", const_!(), volatile!()),
-            TyKind::Typename(name) => write!(f, "{}{}typename {name}", const_!(), volatile!()),
+            TyKind::Struct(name) => write!(f, "{}{}struct {name:?}", const_!(), volatile!()),
+            TyKind::Union(name) => write!(f, "{}{}union {name:?}", const_!(), volatile!()),
+            TyKind::Enum(name) => write!(f, "{}{}enum {name:?}", const_!(), volatile!()),
+            TyKind::Typename(name) => write!(f, "{}{}typename {name:?}", const_!(), volatile!()),
             TyKind::Void => write!(f, "{}{}void", const_!(), volatile!()),
             TyKind::Error => write!(f, "{}{}ERROR", const_!(), volatile!()),
         }
     }
-}
-
-/// Used in decl list.
-#[derive(Debug, Clone, PartialEq)]
-pub enum DeclItem {
-    Var(VarSpecifier, Spanned<Ty>, IdentStr),
-    Func(FuncSpecifier, Spanned<Ty>, Signature, IdentStr),
 }

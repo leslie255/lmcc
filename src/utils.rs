@@ -272,20 +272,18 @@ pub trait DoInBetween {
     ///     |count| {
     ///         print!(",");
     ///         *count += 1;
-    ///         count
     ///     },
     ///     |count, item| {
     ///         print!("{item}");
     ///         *count += 1;
-    ///         count
     ///     },
     /// );
     /// ```
     fn do_in_between<C, F, G>(self, captured: C, f: F, g: G) -> C
     where
         Self: Iterator + Sized,
-        F: FnMut(C) -> C,
-        G: FnMut(C, <Self as Iterator>::Item) -> C;
+        F: FnMut(&mut C),
+        G: FnMut(&mut C, <Self as Iterator>::Item);
 
     /// See `do_in_between`.
     /// Allows returning an error in `f` or `g`, but they must be of the same type.
@@ -300,8 +298,8 @@ pub trait DoInBetween {
     /// let mut file = File::open("file.txt").unwrap();
     /// let write_result = vec.iter().try_do_in_between(
     ///     &mut file,
-    ///     |file| write!(file, ",").map(|_| file),
-    ///     |file, item| write!(file, "{item}").map(|_| file),
+    ///     |file| write!(file, ","),
+    ///     |file, item| write!(file, "{item}"),
     /// );
     /// if let Err(e) = write_result {
     ///     println!("Error writing to the file: {e:?}")
@@ -310,25 +308,25 @@ pub trait DoInBetween {
     fn try_do_in_between<C, F, G, E>(self, captured: C, f: F, g: G) -> Result<C, E>
     where
         Self: Iterator + Sized,
-        F: FnMut(C) -> Result<C, E>,
-        G: FnMut(C, <Self as Iterator>::Item) -> Result<C, E>;
+        F: FnMut(&mut C) -> Result<(), E>,
+        G: FnMut(&mut C, <Self as Iterator>::Item) -> Result<(), E>;
 }
 
 impl<I: Iterator + Sized> DoInBetween for I {
     fn do_in_between<C, F, G>(mut self, mut captured: C, mut f: F, mut g: G) -> C
     where
         Self: Iterator + Sized,
-        F: FnMut(C) -> C,
-        G: FnMut(C, <Self as Iterator>::Item) -> C,
+        F: FnMut(&mut C),
+        G: FnMut(&mut C, <Self as Iterator>::Item),
     {
         if let Some(first) = self.next() {
-            captured = g(captured, first);
+            g(&mut captured, first);
         } else {
             return captured;
         }
         while let Some(item) = self.next() {
-            captured = f(captured);
-            captured = g(captured, item);
+            f(&mut captured);
+            g(&mut captured, item);
         }
         captured
     }
@@ -336,17 +334,17 @@ impl<I: Iterator + Sized> DoInBetween for I {
     fn try_do_in_between<C, F, G, E>(mut self, mut captured: C, mut f: F, mut g: G) -> Result<C, E>
     where
         Self: Iterator + Sized,
-        F: FnMut(C) -> Result<C, E>,
-        G: FnMut(C, <Self as Iterator>::Item) -> Result<C, E>,
+        F: FnMut(&mut C) -> Result<(), E>,
+        G: FnMut(&mut C, <Self as Iterator>::Item) -> Result<(), E>,
     {
         if let Some(first) = self.next() {
-            captured = g(captured, first)?;
+            g(&mut captured, first)?;
         } else {
             return Ok(captured);
         }
         while let Some(item) = self.next() {
-            captured = f(captured)?;
-            captured = g(captured, item)?;
+            f(&mut captured)?;
+            g(&mut captured, item)?;
         }
         Ok(captured)
     }

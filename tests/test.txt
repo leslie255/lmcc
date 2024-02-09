@@ -1,4 +1,10 @@
 typedef int T;
-int main() {
+
+static inline int f(int x) {
+    return x;
+}
+
+int main(T argc, char *argv[]) {
     static T *i;
+    return 0;
 }

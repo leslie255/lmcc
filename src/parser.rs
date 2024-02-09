@@ -862,9 +862,7 @@ impl Parser {
                 let (token, span) = unsafe { self.tokens.next().unwrap_unchecked().into_pair() };
                 self.err_reporter
                     .report(&Error::UnexpectedToken(token).to_spanned(span));
-                // Betting on tail call optimization for this one.
-                // Not gonna be important anyways.
-                return self.parse_expr(span, prec);
+                return Some(Expr::Error.to_spanned(span));
             }
         };
         expr

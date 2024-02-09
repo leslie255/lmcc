@@ -587,7 +587,7 @@ impl Parser {
                 let rhs = self.parse_expr(ident_span, 16)?;
                 let rhs_span = rhs.span();
                 Some(
-                    Expr::VarDeclInit(var_specs, ty, ident, Box::new(rhs))
+                    Expr::Decl(DeclItem::Var(var_specs, ty, ident, Some(Box::new(rhs))))
                         .to_spanned(ty_span.join(rhs_span)),
                 )
             }
@@ -610,25 +610,29 @@ impl Parser {
                         self.tokens.next();
                         let (body, span) = self.parse_block(span)?.into_pair();
                         Some(
-                            Expr::FuncDef(func_speci, ident, sig, Some(body))
+                            Expr::Decl(DeclItem::Func(func_speci, sig, ident, Some(body)))
                                 .to_spanned(ty_span.join(span)),
                         )
                     }
                     Some(t) if t.inner() == &Token::Comma => todo!("list decls"),
                     Some(..) | None => Some(
-                        Expr::FuncDef(func_speci, ident, sig, None)
+                        Expr::Decl(DeclItem::Func(func_speci, sig, ident, None))
                             .to_spanned(ty_span.join(prev_span)),
                     ),
                 }
             }
             _ => {
                 let var_specs = decl_speci.try_into_var_speci(&self.err_reporter);
-                Some(Expr::VarDecl(var_specs, ty, ident).to_spanned(ty_span.join(ident_span)))
+                Some(
+                    Expr::Decl(DeclItem::Var(var_specs, ty, ident, None))
+                        .to_spanned(ty_span.join(ident_span)),
+                )
             }
         }
     }
 
     /// Parse an entire decl statement.
+    /// Unlike most `parse_` functions, this function does not start with the first token already consumed.
     fn parse_decl(&mut self, prev_span: Span) -> Option<Spanned<Expr>> {
         let decl_speci = DeclSpecifiers::default();
         let decl_speci = self.parse_decl_speci(prev_span, decl_speci);
@@ -669,7 +673,7 @@ impl Parser {
         Some(body.to_spanned(start_span.join(prev_span)))
     }
 
-    fn parse_expr(&mut self, prev_span: Span, _prec: u16) -> Option<Spanned<Expr>> {
+    fn parse_expr(&mut self, prev_span: Span, prec: u16) -> Option<Spanned<Expr>> {
         let token = self.expect_peek_token(prev_span)?;
         let span = token.span();
         macro parse_prefix_op($prec:expr, $opkind:expr $(,)?) {{
@@ -678,7 +682,7 @@ impl Parser {
             let operand_span = operand.span();
             Some(Expr::PrefixOp($opkind, Box::new(operand)).to_spanned(span.join(operand_span)))
         }}
-        match token.inner() {
+        let expr = match token.inner() {
             &Token::Ident(s) => {
                 self.tokens.next();
                 if self.is_typename(s) {
@@ -687,10 +691,8 @@ impl Parser {
                     let decl_speci = self.parse_decl_speci(span, decl_speci);
                     let expr = self.parse_decl_content(decl_speci.span(), &decl_speci);
                     expr.as_ref().inspect(|expr| match expr.inner() {
-                        Expr::VarDecl(speci, ty, name) | Expr::VarDeclInit(speci, ty, name, ..) => {
-                            if speci == &VarSpecifier::Typedef {
-                                self.add_typename(*name, ty.inner().clone());
-                            };
+                        Expr::Decl(DeclItem::Var(VarSpecifier::Typedef, ty, name, _)) => {
+                            self.add_typename(*name, ty.inner().clone());
                         }
                         _ => (),
                     });
@@ -746,10 +748,8 @@ impl Parser {
             | Token::Typedef => {
                 let expr = self.parse_decl(span);
                 expr.as_ref().inspect(|expr| match expr.inner() {
-                    Expr::VarDecl(speci, ty, name) | Expr::VarDeclInit(speci, ty, name, ..) => {
-                        if speci == &VarSpecifier::Typedef {
-                            self.add_typename(*name, ty.inner().clone());
-                        };
+                    Expr::Decl(DeclItem::Var(VarSpecifier::Typedef, ty, name, _)) => {
+                        self.add_typename(*name, ty.inner().clone());
                     }
                     _ => (),
                 });
@@ -759,15 +759,12 @@ impl Parser {
                 self.tokens.next();
                 Some(Expr::Break.to_spanned(span))
             }
-            Token::Case => todo!(),
             Token::Continue => {
                 self.tokens.next();
                 Some(Expr::Continue.to_spanned(span))
             }
-            Token::Default => todo!(),
-            Token::Do => todo!(),
-            Token::Else => todo!(),
-            Token::For => todo!(),
+            Token::Do => todo!("do-while loops"),
+            Token::For => todo!("for loops"),
             Token::Goto => {
                 self.tokens.next();
                 if let Some((ident, ident_span)) = self.expect_ident(span).map(Spanned::into_pair) {
@@ -776,7 +773,7 @@ impl Parser {
                     return Some(Expr::Error.to_spanned(span));
                 }
             }
-            Token::If => todo!(),
+            Token::If => todo!("if"),
             Token::Return => {
                 self.tokens.next();
                 match self.tokens.peek() {
@@ -794,33 +791,16 @@ impl Parser {
                     }
                 }
             }
-            Token::Sizeof => todo!(),
-            Token::Switch => todo!(),
-            Token::While => todo!(),
+            Token::Sizeof => todo!("sizeof"),
+            Token::Switch => todo!("switch"),
+            Token::While => todo!("while"),
             Token::Add => parse_prefix_op!(2, PrefixOpKind::UnaryAdd),
             Token::AddAdd => parse_prefix_op!(2, PrefixOpKind::PreInc),
-            Token::AddEq => todo!(),
             Token::Sub => parse_prefix_op!(2, PrefixOpKind::UnarySub),
             Token::SubSub => parse_prefix_op!(2, PrefixOpKind::PreDec),
-            Token::SubEq => todo!(),
-            Token::Arrow => todo!(),
             Token::Mul => parse_prefix_op!(2, PrefixOpKind::Deref),
-            Token::MulEq => todo!(),
-            Token::Div => todo!(),
-            Token::DivEq => todo!(),
-            Token::Rem => todo!(),
-            Token::RemEq => todo!(),
-            Token::Lt => todo!(),
-            Token::LtLt => todo!(),
-            Token::LtLtEq => todo!(),
-            Token::LtEq => todo!(),
-            Token::Gt => todo!(),
-            Token::GtGt => todo!(),
-            Token::GtGtEq => todo!(),
-            Token::GtEq => todo!(),
             Token::Tilde => parse_prefix_op!(2, PrefixOpKind::BitNot),
             Token::Exc => parse_prefix_op!(2, PrefixOpKind::Not),
-            Token::ExcEq => todo!(),
             Token::And => parse_prefix_op!(2, PrefixOpKind::Ref),
             Token::AndAnd => {
                 self.tokens.next();
@@ -839,27 +819,55 @@ impl Parser {
                     )),
                 )
             }
-            Token::AndEq => todo!(),
-            Token::Eq => todo!(),
-            Token::EqEq => todo!(),
-            Token::Or => todo!(),
-            Token::OrOr => todo!(),
-            Token::OrEq => todo!(),
-            Token::Xor => todo!(),
-            Token::XorEq => todo!(),
-            Token::Dot => todo!(),
-            Token::Comma => todo!(),
-            Token::Colon => todo!(),
-            Token::Semicolon => todo!(),
-            Token::Ques => todo!(),
-            Token::ParenOpen => todo!(),
-            Token::ParenClose => todo!(),
-            Token::BracketOpen => todo!(),
-            Token::BracketClose => todo!(),
-            Token::BraceOpen => todo!(),
-            Token::BraceClose => todo!(),
-            Token::Backslash => todo!(),
-        }
+            Token::ParenOpen => todo!("parens"),
+            Token::Case
+            | Token::Default
+            | Token::Else
+            | Token::AddEq
+            | Token::SubEq
+            | Token::Arrow
+            | Token::MulEq
+            | Token::Div
+            | Token::DivEq
+            | Token::Rem
+            | Token::RemEq
+            | Token::Lt
+            | Token::LtLt
+            | Token::LtLtEq
+            | Token::LtEq
+            | Token::Gt
+            | Token::GtGt
+            | Token::GtGtEq
+            | Token::GtEq
+            | Token::ExcEq
+            | Token::AndEq
+            | Token::Eq
+            | Token::EqEq
+            | Token::Or
+            | Token::OrOr
+            | Token::OrEq
+            | Token::Xor
+            | Token::XorEq
+            | Token::Backslash
+            | Token::Dot
+            | Token::Comma
+            | Token::Colon
+            | Token::Semicolon
+            | Token::Ques
+            | Token::ParenClose
+            | Token::BracketOpen
+            | Token::BracketClose
+            | Token::BraceOpen
+            | Token::BraceClose => {
+                let (token, span) = unsafe { self.tokens.next().unwrap_unchecked().into_pair() };
+                self.err_reporter
+                    .report(&Error::UnexpectedToken(token).to_spanned(span));
+                // Betting on tail call optimization for this one.
+                // Not gonna be important anyways.
+                return self.parse_expr(span, prec);
+            }
+        };
+        expr
     }
 }
 

@@ -26,16 +26,9 @@ pub enum Expr {
     InfixOp(Box<Spanned<Expr>>, InfixOpKind, Box<Spanned<Expr>>),
     InfixOpAssign(Box<Spanned<Expr>>, AssignOpKind, Box<Spanned<Expr>>),
     Assign(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
-    VarDecl(VarSpecifier, Spanned<Ty>, IdentStr),
-    VarDeclInit(VarSpecifier, Spanned<Ty>, IdentStr, Box<Spanned<Expr>>),
+    Decl(DeclItem),
     DeclList(Vec<DeclItem>),
     Return(Option<Box<Spanned<Expr>>>),
-    FuncDef(
-        FuncSpecifier,
-        IdentStr,
-        Signature,
-        Option<Vec<Spanned<Expr>>>,
-    ),
     Labal(IdentStr),
     Goto(IdentStr),
     Break,
@@ -44,7 +37,8 @@ pub enum Expr {
 impl Expr {
     pub fn omits_semicolon(&self) -> bool {
         match self {
-            Expr::Error | Expr::FuncDef(..) | Expr::Labal(..) => true,
+            Expr::Decl(DeclItem::Func(_, _, _, body)) => body.is_some(),
+            Expr::Error | Expr::Labal(..) => true,
             _ => false,
         }
     }
@@ -261,8 +255,18 @@ pub struct Signature {
 /// Used in decl list.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeclItem {
-    Var(VarSpecifier, Spanned<Ty>, IdentStr, Option<Expr>),
-    Func(FuncSpecifier, Spanned<Ty>, Signature, IdentStr, Option<Vec<Spanned<Expr>>>),
+    Var(
+        VarSpecifier,
+        Spanned<Ty>,
+        IdentStr,
+        Option<Box<Spanned<Expr>>>,
+    ),
+    Func(
+        FuncSpecifier,
+        Signature,
+        IdentStr,
+        Option<Vec<Spanned<Expr>>>,
+    ),
 }
 
 impl Debug for Signature {
@@ -281,11 +285,9 @@ impl Debug for Signature {
                     write!(f, ",")
                 }
             },
-            |f, (ty, name)| {
-                match name {
-                    Some(name) => write!(f, "{ty:?} {name:?}"),
-                    None => write!(f, "{ty:?}"),
-                }
+            |f, (ty, name)| match name {
+                Some(name) => write!(f, "{ty:?} {name:?}"),
+                None => write!(f, "{ty:?}"),
             },
         )?;
         write!(f, ")")

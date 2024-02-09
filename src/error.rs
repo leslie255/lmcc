@@ -38,6 +38,7 @@ pub enum Error<'a> {
     ExpectStrLiteral,
     ExpectToken(Token),
     ExpectTokens(&'a [Token]),
+    UnexpectedToken(Token),
     RestrictOnNonPointer,
     ConflictingSignness,
     InvalidSignnessFlag,

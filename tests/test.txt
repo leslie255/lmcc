@@ -1,10 +1,2 @@
-typedef int T;
-
-static inline int f(int x) {
-    return x;^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-}
-
-int main(T argc, char *argv[]) {
-    static T *i;
-    return 0;
-}
+x += 1+2*3;
+x <<= 1*2+3;

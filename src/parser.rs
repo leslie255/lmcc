@@ -865,7 +865,60 @@ impl Parser {
                 return Some(Expr::Error.to_spanned(span));
             }
         };
-        expr
+        let mut expr = expr?;
+        while let Some((token, span)) = self.tokens.peek().map(Spanned::as_pair) {
+            macro infix_op($exprkind:tt, $kind:expr, $prec:expr) {{
+                if prec <= $prec {
+                    break;
+                }
+                self.tokens.next();
+                let rhs = self
+                    .parse_expr(span, $prec)
+                    .unwrap_or_else(|| Expr::Error.to_spanned(span));
+                let span = expr.span().join(rhs.span());
+                expr = Expr::$exprkind(Box::new(expr), $kind, Box::new(rhs)).to_spanned(span);
+            }}
+            match token {
+                Token::AddAdd => todo!("postfix++"),
+                Token::SubSub => todo!("postfix--"),
+                Token::ParenOpen => todo!("calls"),
+                Token::Mul => infix_op!(InfixOp, InfixOpKind::Mul, 3),
+                Token::Div => infix_op!(InfixOp, InfixOpKind::Div, 3),
+                Token::Rem => infix_op!(InfixOp, InfixOpKind::Rem, 3),
+                Token::Add => infix_op!(InfixOp, InfixOpKind::Add, 4),
+                Token::Sub => infix_op!(InfixOp, InfixOpKind::Sub, 4),
+                Token::LtLt => infix_op!(InfixOp, InfixOpKind::Bsl, 5),
+                Token::GtGt => infix_op!(InfixOp, InfixOpKind::Bsr, 5),
+                Token::Lt => infix_op!(InfixOp, InfixOpKind::Lt, 6),
+                Token::Gt => infix_op!(InfixOp, InfixOpKind::Gt, 6),
+                Token::LtEq => infix_op!(InfixOp, InfixOpKind::Le, 6),
+                Token::GtEq => infix_op!(InfixOp, InfixOpKind::Ge, 6),
+                Token::EqEq => infix_op!(InfixOp, InfixOpKind::Eq, 7),
+                Token::ExcEq => infix_op!(InfixOp, InfixOpKind::Ne, 7),
+                Token::And => infix_op!(InfixOp, InfixOpKind::BitAnd, 8),
+                Token::Xor => infix_op!(InfixOp, InfixOpKind::BitXor, 9),
+                Token::Or => infix_op!(InfixOp, InfixOpKind::BitOr, 10),
+                Token::AndAnd => infix_op!(InfixOp, InfixOpKind::And, 11),
+                Token::OrOr => infix_op!(InfixOp, InfixOpKind::Or, 12),
+                Token::Ques => todo!("tenary operator ?:"),
+                // Assignments technically have right-to-left associativity, but most compilers don't care,
+                // as only expressions with very high (aka. small) precedence can legally be the LHS of assignments.
+                Token::Eq => infix_op!(InfixOp, InfixOpKind::Eq, 14),
+                Token::AddEq => infix_op!(OpAssign, AssignOpKind::Add, 14),
+                Token::SubEq => infix_op!(OpAssign, AssignOpKind::Sub, 14),
+                Token::MulEq => infix_op!(OpAssign, AssignOpKind::Mul, 14),
+                Token::DivEq => infix_op!(OpAssign, AssignOpKind::Div, 14),
+                Token::RemEq => infix_op!(OpAssign, AssignOpKind::Rem, 14),
+                Token::LtLtEq => infix_op!(OpAssign, AssignOpKind::Bsl, 14),
+                Token::GtGtEq => infix_op!(OpAssign, AssignOpKind::Bsr, 14),
+                Token::AndEq => infix_op!(OpAssign, AssignOpKind::BitAnd, 14),
+                Token::XorEq => infix_op!(OpAssign, AssignOpKind::BitXor, 14),
+                Token::OrEq => infix_op!(OpAssign, AssignOpKind::BitOr, 14),
+                // FIXME: comma operator.
+                _ => break,
+            }
+        }
+        Some(expr)
     }
 }
 

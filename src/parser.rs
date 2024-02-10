@@ -878,10 +878,21 @@ impl Parser {
                 let span = expr.span().join(rhs.span());
                 expr = Expr::$exprkind(Box::new(expr), $kind, Box::new(rhs)).to_spanned(span);
             }}
+            macro postfix_op($kind:expr, $prec:expr) {{
+                if prec <= $prec {
+                    break;
+                }
+                self.tokens.next();
+                let span = expr.span().join(span);
+                expr = Expr::PostfixOp(Box::new(expr), $kind).to_spanned(span);
+            }}
             match token {
-                Token::AddAdd => todo!("postfix++"),
-                Token::SubSub => todo!("postfix--"),
                 Token::ParenOpen => todo!("calls"),
+                Token::BraceOpen => todo!("subscripting"),
+                Token::Dot => todo!("member access"),
+                Token::Arrow => todo!("indirect member access"),
+                Token::AddAdd => postfix_op!(PostfixOpKind::PostInc, 1),
+                Token::SubSub => postfix_op!(PostfixOpKind::PostDec, 1),
                 Token::Mul => infix_op!(InfixOp, InfixOpKind::Mul, 3),
                 Token::Div => infix_op!(InfixOp, InfixOpKind::Div, 3),
                 Token::Rem => infix_op!(InfixOp, InfixOpKind::Rem, 3),
@@ -914,7 +925,8 @@ impl Parser {
                 Token::AndEq => infix_op!(OpAssign, AssignOpKind::BitAnd, 14),
                 Token::XorEq => infix_op!(OpAssign, AssignOpKind::BitXor, 14),
                 Token::OrEq => infix_op!(OpAssign, AssignOpKind::BitOr, 14),
-                // FIXME: comma operator.
+                // For function calls, we simply specify precedence to be 15 when parsing arguments to a call.
+                Token::Comma => infix_op!(InfixOp, InfixOpKind::Comma, 15),
                 _ => break,
             }
         }

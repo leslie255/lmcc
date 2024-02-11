@@ -970,9 +970,54 @@ impl Parser {
                     else => return Some(Expr::Error.to_spanned(span)));
                 Some(Expr::DoWhile(body, Box::new(cond)).to_spanned(start_span.join(span)))
             }
-            Token::For => todo!("for"),
+            Token::Switch => {
+                self.tokens.next();
+                let start_span = span;
+                let span = expect_token!(self, Token::ParenOpen, span,
+                    else => return Some(Expr::Error.to_spanned(span)));
+                let cond = self.parse_expr(span, 16)?;
+                let span = expect_token!(self, Token::ParenClose, cond.span(),
+                    else => return Some(Expr::Error.to_spanned(span)));
+                let body = self.parse_expr_or_block(span)?;
+                let span = start_span.join(body.span());
+                Some(Expr::Switch(Box::new(cond), body).to_spanned(span))
+            }
+            Token::For => {
+                self.tokens.next();
+                let start_span = span;
+                let span = expect_token!(self, Token::ParenOpen, span,
+                    else => return Some(Expr::Error.to_spanned(span)));
+                macro parse_fragment($prev_span:expr, $end_token:path) {{
+                    let prev_span = $prev_span;
+                    match self.expect_peek_token(prev_span)?.inner() {
+                        $end_token => {
+                            self.tokens.next();
+                            (None, prev_span)
+                        },
+                        _ => {
+                            let expr = self.parse_expr(prev_span, 16)?;
+                            let span = expect_token!(self, $end_token, expr.span(),
+                                else => return Some(Expr::Error.to_spanned(start_span.join(expr.span()))));
+                            (Some(expr), span)
+                        }
+                    }
+                }}
+                let (expr0, span) = parse_fragment!(span, Token::Semicolon);
+                let (expr1, span) = parse_fragment!(span, Token::Semicolon);
+                let (expr2, span) = parse_fragment!(span, Token::ParenClose);
+                let body = self.parse_expr_or_block(span)?;
+                let span = start_span.join(body.span());
+                Some(
+                    Expr::For(
+                        expr0.map(Box::new),
+                        expr1.map(Box::new),
+                        expr2.map(Box::new),
+                        body,
+                    )
+                    .to_spanned(span),
+                )
+            }
             Token::If => todo!("if"),
-            Token::Switch => todo!("switch"),
             Token::Goto => {
                 self.tokens.next();
                 if let Some((ident, ident_span)) = self.expect_ident(span).map(Spanned::into_pair) {
@@ -1095,7 +1140,7 @@ impl Parser {
                 }
                 Token::Arrow => {
                     expr = self.parse_field_path(expr)?;
-                },
+                }
                 Token::AddAdd => postfix_op!(PostfixOpKind::PostInc),
                 Token::SubSub => postfix_op!(PostfixOpKind::PostDec),
                 Token::Mul => infix_op!(InfixOp, InfixOpKind::Mul, 3),

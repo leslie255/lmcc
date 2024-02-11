@@ -11,13 +11,14 @@ Very WIP.
 Parser TODO:
 - Preprocessor/macros
 - `if` statements.
-- `switch` statements.
 - `for` statements.
 - `struct`/`enum`/`union` declarations (`struct T x;` case is parsable, not `struct T { ... } x;` case).
 - List decl.
+- Function pointer types.
 - Flexible `;` rules.
-- Better error recovery.
 - List/struct literals.
 - Compound literals.
 - Tenary operator.
 - `sizeof` operator.
+
+- Better error recovery.

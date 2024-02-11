@@ -17,8 +17,10 @@ while (true) {}
 while (true) {
     f();
 }
-do f() while (true);
+
 do {} while (true);
-do {
-    f();
-} while (true);
+
+switch (0) {}
+
+for (;;) {}
+for (x;y;z) {}

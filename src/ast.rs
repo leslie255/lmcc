@@ -41,6 +41,13 @@ pub enum Expr {
     FieldPath(Box<Spanned<Expr>>, Vec<FieldPathItem>),
     While(Box<Spanned<Expr>>, ExprOrBlock),
     DoWhile(ExprOrBlock, Box<Spanned<Expr>>),
+    Switch(Box<Spanned<Expr>>, ExprOrBlock),
+    For(
+        Option<Box<Spanned<Expr>>>,
+        Option<Box<Spanned<Expr>>>,
+        Option<Box<Spanned<Expr>>>,
+        ExprOrBlock,
+    ),
 }
 
 pub type ExprBlock = Vec<Spanned<Expr>>;
@@ -48,8 +55,8 @@ pub type ExprBlock = Vec<Spanned<Expr>>;
 impl Expr {
     pub fn omits_semicolon(&self) -> bool {
         match self {
-            Expr::Decl(DeclItem::Func(_, _, _, body)) => body.is_some(),
-            Expr::While(_, body) => body.is_block(),
+            Expr::Decl(DeclItem::Func(.., body)) => body.is_some(),
+            Expr::While(_, body) | Expr::Switch(_, body) | Expr::For(.., body) => body.is_block(),
             Expr::Error | Expr::Labal(..) | Expr::Case(..) | Expr::Default => true,
             _ => false,
         }

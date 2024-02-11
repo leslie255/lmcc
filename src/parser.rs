@@ -966,6 +966,7 @@ impl Parser {
                 };
                 Some(Expr::Default.to_spanned(span.join(end_span)))
             }
+            Token::BraceOpen => todo!("list/struct literal"),
             Token::Else
             | Token::AddEq
             | Token::SubEq
@@ -1001,7 +1002,6 @@ impl Parser {
             | Token::ParenClose
             | Token::BracketOpen
             | Token::BracketClose
-            | Token::BraceOpen
             | Token::BraceClose => {
                 let (token, span) = unsafe { self.tokens.next().unwrap_unchecked().into_pair() };
                 self.err_reporter
@@ -1033,9 +1033,25 @@ impl Parser {
                 // Precedence 1. No need for precedence checking here.
                 Token::ParenOpen => {
                     self.tokens.next();
-                    expr = self.parse_call(prev_span, expr)?
+                    expr = self.parse_call(span, expr)?;
                 }
-                Token::BraceOpen => todo!("subscripting"),
+                Token::BracketOpen => {
+                    self.tokens.next();
+                    let operand = self.parse_expr(span, 16)?;
+                    let end_span = match self.expect_peek_token(operand.span())?.as_pair() {
+                        (Token::BracketClose, span) => {
+                            self.tokens.next();
+                            span
+                        }
+                        (_, span) => {
+                            self.err_reporter
+                                .report(&Error::ExpectToken(Token::BracketClose).to_spanned(span));
+                            operand.span()
+                        }
+                    };
+                    let span = expr.span().join(end_span);
+                    expr = Expr::Subscript(Box::new(expr), Box::new(operand)).to_spanned(span);
+                }
                 Token::Dot => todo!("member access"),
                 Token::Arrow => todo!("indirect member access"),
                 Token::AddAdd => postfix_op!(PostfixOpKind::PostInc),

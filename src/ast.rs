@@ -31,6 +31,7 @@ pub enum Expr {
     Goto(IdentStr),
     Typecast(Ty, Box<Spanned<Expr>>),
     Call(Box<Spanned<Expr>>, Spanned<Vec<Spanned<Expr>>>),
+    Subscript(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Break,
     Continue,
     Case(Box<Spanned<Expr>>),

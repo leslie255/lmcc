@@ -9,3 +9,5 @@ f(x, y);
 case 0:
 
 default:
+
+a[i];

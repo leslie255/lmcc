@@ -497,10 +497,12 @@ impl Parser {
             ensure_no!(typename, ConflictingTypeSpecifier);
             TyKind::Int(signness.into_inner(), IntSize::_32)
         } else if let Some(typename) = decl_speci.typename {
+            ensure_no!(signness);
             ensure_no!(struct_, ConflictingTypeSpecifier);
             ensure_no!(union_, ConflictingTypeSpecifier);
             TyKind::Typename(*typename)
         } else if let Some(struct_) = &decl_speci.struct_ {
+            ensure_no!(signness);
             ensure_no!(union_, ConflictingTypeSpecifier);
             TyKind::Struct(struct_.0, struct_.1.clone())
         } else if let Some(union_) = &decl_speci.union_ {
@@ -711,8 +713,8 @@ impl Parser {
         prev_span: Span,
         decl_speci: &Spanned<DeclSpecifiers>,
     ) -> Option<Spanned<Expr>> {
-        let ty = self.deduce_ty_speci(decl_speci);
-        let ty = self.parse_ptr_decl(ty);
+        let root_ty = self.deduce_ty_speci(decl_speci);
+        let ty = self.parse_ptr_decl(root_ty.clone()); // `.clone()` for possible list decl. Root type is simple so cloning is really fast.
         let ty_span = ty.span();
         let (&Token::Ident(ident), ident_span) = self.expect_peek_token(ty_span)?.as_pair() else {
             return Some(Expr::EmptyDecl(ty.into_inner()).to_spanned(ty_span));
@@ -821,6 +823,7 @@ impl Parser {
                     break;
                 }
                 _ => {
+                    // Parse the block mostly as if it's a normal code block.
                     let expr = self.parse_expr(end_span, 16)?;
                     end_span = expr.span();
                     let mut omits_semicolon = expr.allow_omit_semicolon();

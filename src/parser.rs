@@ -506,6 +506,7 @@ impl Parser {
             ensure_no!(union_, ConflictingTypeSpecifier);
             TyKind::Struct(struct_.0, struct_.1.clone())
         } else if let Some(union_) = &decl_speci.union_ {
+            ensure_no!(signness);
             TyKind::Union(union_.0, union_.1.clone())
         } else {
             self.err_reporter

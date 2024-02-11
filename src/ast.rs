@@ -12,7 +12,7 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    /// For propagating erors forward.
+    /// For propagating errors forward.
     Error,
     Ident(IdentStr),
     NumLiteral(NumValue),
@@ -20,9 +20,7 @@ pub enum Expr {
     StrLiteral(Rc<[u8]>),
     PrefixOp(PrefixOpKind, Box<Spanned<Expr>>),
     PostfixOp(Box<Spanned<Expr>>, PostfixOpKind),
-    /// Not including assignments or memeber accessing because the LHS/RHS for those aren't really expressions.
-    /// Does include BSL/BSR, compile error later down the line if the RHS is not an integer literal.
-    /// Note that the `a * b;` situation is treated as a mul operation in AST stage.
+    /// Not including or memeber accessing because the LHS/RHS for those aren't really expressions.
     InfixOp(Box<Spanned<Expr>>, InfixOpKind, Box<Spanned<Expr>>),
     OpAssign(Box<Spanned<Expr>>, AssignOpKind, Box<Spanned<Expr>>),
     Assign(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
@@ -35,12 +33,13 @@ pub enum Expr {
     Call(Box<Spanned<Expr>>, Spanned<Vec<Spanned<Expr>>>),
     Break,
     Continue,
+    Case(Box<Spanned<Expr>>),
 }
 impl Expr {
     pub fn omits_semicolon(&self) -> bool {
         match self {
             Expr::Decl(DeclItem::Func(_, _, _, body)) => body.is_some(),
-            Expr::Error | Expr::Labal(..) => true,
+            Expr::Error | Expr::Labal(..) |Expr::Case(..)=> true,
             _ => false,
         }
     }

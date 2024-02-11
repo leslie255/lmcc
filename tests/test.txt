@@ -5,3 +5,5 @@ typedef int T;
 f();
 f(x);
 f(x, y);
+
+case 0:

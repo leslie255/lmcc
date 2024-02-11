@@ -40,7 +40,7 @@ fn main() {
     let path = {
         let mut args = std::env::args();
         args.next().unwrap();
-        args.next().unwrap()
+        args.next().expect("Expect one argument for input file")
     }
     .leak();
     let source = file_reader.read_file(path).unwrap();

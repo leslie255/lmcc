@@ -604,9 +604,8 @@ impl Parser {
                 let token = self.tokens.peek();
                 let func_speci = decl_speci.try_into_func_speci(&self.err_reporter);
                 let sig = Signature { ret_ty, args };
-                match token {
-                    Some(t) if t.inner() == &Token::BraceOpen => {
-                        let span = t.span();
+                match token.map(Spanned::as_pair) {
+                    Some((Token::BraceOpen, span)) => {
                         self.tokens.next();
                         let (body, span) = self.parse_block(span)?.into_pair();
                         Some(
@@ -614,7 +613,7 @@ impl Parser {
                                 .to_spanned(ty_span.join(span)),
                         )
                     }
-                    Some(t) if t.inner() == &Token::Comma => todo!("list decls"),
+                    Some((Token::Comma, _)) => todo!("list decls"),
                     Some(..) | None => Some(
                         Expr::Decl(DeclItem::Func(func_speci, sig, ident, None))
                             .to_spanned(ty_span.join(prev_span)),
@@ -936,8 +935,23 @@ impl Parser {
                 self.tokens.next();
                 self.parse_paren(span)
             }
-            Token::Case
-            | Token::Default
+            Token::Case => {
+                self.tokens.next();
+                let expr = self.parse_expr(span, 16)?;
+                let end_span = match self.expect_peek_token(expr.span())?.as_pair() {
+                    (Token::Colon, span) => {
+                        self.tokens.next();
+                        span
+                    }
+                    (_, span) => {
+                        self.err_reporter
+                            .report(&Error::ExpectToken(Token::Colon).to_spanned(span));
+                        expr.span()
+                    }
+                };
+                Some(Expr::Case(Box::new(expr)).to_spanned(span.join(end_span)))
+            }
+            Token::Default
             | Token::Else
             | Token::AddEq
             | Token::SubEq

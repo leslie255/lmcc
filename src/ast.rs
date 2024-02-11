@@ -29,6 +29,7 @@ pub enum Expr {
     Assign(ChildExpr, ChildExpr),
     Decl(DeclItem),
     DeclList(Vec<DeclItem>),
+    EmptyDecl(Ty),
     Return(Option<ChildExpr>),
     Labal(IdentStr),
     Goto(IdentStr),

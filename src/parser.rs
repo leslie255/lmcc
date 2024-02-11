@@ -717,7 +717,12 @@ impl Parser {
         let ty = self.deduce_ty_speci(decl_speci);
         let ty = self.parse_ptr_decl(ty);
         let ty_span = ty.span();
-        let (ident, ident_span) = self.expect_ident(ty_span)?.into_pair();
+        let (&Token::Ident(ident), ident_span) = self.expect_peek_token(ty_span)?.as_pair() else {
+            return Some(Expr::EmptyDecl(ty.into_inner()).to_spanned(ty_span));
+        };
+
+        self.tokens.next();
+
         let ty = self.parse_arr_decl(ty)?;
 
         match self.tokens.peek() {

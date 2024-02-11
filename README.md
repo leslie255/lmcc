@@ -9,8 +9,8 @@ Very WIP.
 ## Progress
 
 Parser TODO:
-- Preprocessor/macros
-- `enum`
+- Preprocessor/macros.
+- `enum`.
 - List decl.
 - Function pointer types.
 - List/struct literals.

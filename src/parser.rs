@@ -1176,7 +1176,7 @@ impl Parser {
         Some(expr)
     }
 
-    fn consume_semicolons(&mut self, mut prev_span: Span, allows_omit:bool) -> Span {
+    fn consume_semicolons(&mut self, mut prev_span: Span, allows_omit: bool) -> Span {
         let token = self.tokens.peek();
         match token.map(Spanned::as_pair) {
             Some((Token::Semicolon, span)) => {
@@ -1196,9 +1196,7 @@ impl Parser {
                     self.tokens.next();
                     prev_span = span;
                 }
-                _ => {
-                    break
-                }
+                _ => break,
             }
         }
         prev_span
@@ -1211,7 +1209,7 @@ impl Iterator for Parser {
     fn next(&mut self) -> Option<Self::Item> {
         let span = self.tokens.peek()?.span();
         let expr = self.parse_expr(span, 16)?;
-        self.consume_semicolons(expr.span(),expr.allow_omit_semicolon());
+        self.consume_semicolons(expr.span(), expr.allow_omit_semicolon());
         Some(expr)
     }
 }

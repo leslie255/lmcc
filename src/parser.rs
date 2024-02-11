@@ -226,11 +226,13 @@ macro expect_token {
 
 impl Parser {
     pub fn new(err_reporter: Rc<ErrorReporter>, tokens: Peekable<TokenStream>) -> Self {
-        Self {
+        let mut self_ = Self {
             err_reporter,
             tokens,
             typenames: vec![HashMap::new()],
-        }
+        };
+        self_.consume_semicolons(Span::default(), true);
+        self_
     }
 
     fn is_typename(&self, ident: IdentStr) -> bool {
@@ -657,6 +659,7 @@ impl Parser {
         self.enters_block();
         let start_span = prev_span;
         let mut body = Vec::<Spanned<Expr>>::new();
+        self.consume_semicolons(prev_span, true);
         loop {
             let (token, span) = self.expect_peek_token(prev_span)?.as_pair();
             prev_span = span;
@@ -667,18 +670,8 @@ impl Parser {
                 }
                 _ => {
                     let expr = self.parse_expr(prev_span, 16)?;
-                    let omits_semicolon = expr.omits_semicolon();
-                    prev_span = expr.span();
+                    prev_span = self.consume_semicolons(expr.span(), expr.allow_omit_semicolon());
                     body.push(expr);
-                    let token = self.tokens.peek();
-                    if token.is_some_and(|t| t.inner() == &Token::Semicolon) {
-                        self.tokens.next();
-                    } else {
-                        if !omits_semicolon {
-                            self.err_reporter
-                                .report(&Error::MissingSemicolon.to_spanned(span.tail()));
-                        }
-                    }
                 }
             }
         }
@@ -1182,6 +1175,34 @@ impl Parser {
         }
         Some(expr)
     }
+
+    fn consume_semicolons(&mut self, mut prev_span: Span, allows_omit:bool) -> Span {
+        let token = self.tokens.peek();
+        match token.map(Spanned::as_pair) {
+            Some((Token::Semicolon, span)) => {
+                self.tokens.next();
+                prev_span = span;
+            }
+            _ => {
+                if !allows_omit {
+                    self.err_reporter
+                        .report(&Error::MissingSemicolon.to_spanned(prev_span.tail()));
+                }
+            }
+        }
+        while let Some(token) = self.tokens.peek() {
+            match token.as_pair() {
+                (Token::Semicolon, span) => {
+                    self.tokens.next();
+                    prev_span = span;
+                }
+                _ => {
+                    break
+                }
+            }
+        }
+        prev_span
+    }
 }
 
 impl Iterator for Parser {
@@ -1190,16 +1211,7 @@ impl Iterator for Parser {
     fn next(&mut self) -> Option<Self::Item> {
         let span = self.tokens.peek()?.span();
         let expr = self.parse_expr(span, 16)?;
-        let span = expr.span();
-        let token = self.tokens.peek();
-        if token.is_some_and(|t| t.inner() == &Token::Semicolon) {
-            self.tokens.next();
-        } else {
-            if !expr.omits_semicolon() {
-                self.err_reporter
-                    .report(&Error::MissingSemicolon.to_spanned(span.tail()));
-            }
-        }
+        self.consume_semicolons(expr.span(),expr.allow_omit_semicolon());
         Some(expr)
     }
 }

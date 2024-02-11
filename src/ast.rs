@@ -53,7 +53,7 @@ pub enum Expr {
 pub type ExprBlock = Vec<Spanned<Expr>>;
 
 impl Expr {
-    pub fn omits_semicolon(&self) -> bool {
+    pub const fn allow_omit_semicolon(&self) -> bool {
         match self {
             Expr::Decl(DeclItem::Func(.., body)) => body.is_some(),
             Expr::While(_, body) | Expr::Switch(_, body) | Expr::For(.., body) => body.is_block(),

@@ -10,6 +10,9 @@ use crate::{
     utils::{DoInBetween, IdentStr},
 };
 
+type ChildExpr = Box<Spanned<Expr>>;
+pub type ExprBlock = Vec<Spanned<Expr>>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     /// For propagating errors forward.
@@ -18,46 +21,52 @@ pub enum Expr {
     NumLiteral(NumValue),
     CharLiteral(u8),
     StrLiteral(Rc<[u8]>),
-    PrefixOp(PrefixOpKind, Box<Spanned<Expr>>),
-    PostfixOp(Box<Spanned<Expr>>, PostfixOpKind),
+    PrefixOp(PrefixOpKind, ChildExpr),
+    PostfixOp(ChildExpr, PostfixOpKind),
     /// Not including or memeber accessing because the LHS/RHS for those aren't really expressions.
-    InfixOp(Box<Spanned<Expr>>, InfixOpKind, Box<Spanned<Expr>>),
-    OpAssign(Box<Spanned<Expr>>, AssignOpKind, Box<Spanned<Expr>>),
-    Assign(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
+    InfixOp(ChildExpr, InfixOpKind, ChildExpr),
+    OpAssign(ChildExpr, AssignOpKind, ChildExpr),
+    Assign(ChildExpr, ChildExpr),
     Decl(DeclItem),
     DeclList(Vec<DeclItem>),
-    Return(Option<Box<Spanned<Expr>>>),
+    Return(Option<ChildExpr>),
     Labal(IdentStr),
     Goto(IdentStr),
-    Typecast(Ty, Box<Spanned<Expr>>),
-    Call(Box<Spanned<Expr>>, Spanned<ExprBlock>),
-    Subscript(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
+    Typecast(Ty, ChildExpr),
+    Call(ChildExpr, Spanned<ExprBlock>),
+    Subscript(ChildExpr, ChildExpr),
     Break,
     Continue,
-    Case(Box<Spanned<Expr>>),
+    Case(ChildExpr),
     Default,
     /// Representation for member access expressions.
     /// `expr.field0->field1`.
-    FieldPath(Box<Spanned<Expr>>, Vec<FieldPathItem>),
-    While(Box<Spanned<Expr>>, ExprOrBlock),
-    DoWhile(ExprOrBlock, Box<Spanned<Expr>>),
-    Switch(Box<Spanned<Expr>>, ExprOrBlock),
+    FieldPath(ChildExpr, Vec<FieldPathItem>),
+    While(ChildExpr, ExprOrBlock),
+    DoWhile(ExprOrBlock, ChildExpr),
+    Switch(ChildExpr, ExprOrBlock),
     For(
-        Option<Box<Spanned<Expr>>>,
-        Option<Box<Spanned<Expr>>>,
-        Option<Box<Spanned<Expr>>>,
+        Option<ChildExpr>,
+        Option<ChildExpr>,
+        Option<ChildExpr>,
         ExprOrBlock,
     ),
+    If(Vec<(ChildExpr, ExprOrBlock)>, Option<ExprOrBlock>),
 }
 
-pub type ExprBlock = Vec<Spanned<Expr>>;
-
 impl Expr {
-    pub const fn allow_omit_semicolon(&self) -> bool {
+    pub fn allow_omit_semicolon(&self) -> bool {
         match self {
-            Expr::Decl(DeclItem::Func(.., body)) => body.is_some(),
-            Expr::While(_, body) | Expr::Switch(_, body) | Expr::For(.., body) => body.is_block(),
-            Expr::Error | Expr::Labal(..) | Expr::Case(..) | Expr::Default => true,
+            Self::Decl(DeclItem::Func(.., body)) => body.is_some(),
+            Self::While(_, body) | Self::Switch(_, body) | Self::For(.., body) => body.is_block(),
+            Self::If(elifs, else_) => {
+                if let Some(else_) = else_ {
+                    else_.is_block()
+                } else {
+                    elifs.last().unwrap().1.is_block()
+                }
+            }
+            Self::Error | Self::Labal(..) | Self::Case(..) | Self::Default => true,
             _ => false,
         }
     }

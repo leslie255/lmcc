@@ -4,7 +4,7 @@ use crate::{
     ast::*,
     error::{Error, ErrorReporter, Span, Spanned, ToSpanned},
     token::NumValue,
-    utils::{fixme, match_into_unchecked, IdentStr},
+    utils::{fixme, match_into, match_into_unchecked, IdentStr},
 };
 
 use super::token::{Token, TokenStream};
@@ -1010,7 +1010,45 @@ impl Parser {
                     .to_spanned(span),
                 )
             }
-            Token::If => todo!("if"),
+            Token::If => {
+                self.tokens.next();
+                let start_span = span;
+                macro parse_elif_branch($prev_span:expr) {{
+                    let span = expect_token!(self, Token::ParenOpen, $prev_span,
+                        else => return Some(Expr::Error.to_spanned(span)));
+                    let cond = self.parse_expr(span, 16)?;
+                    let span = expect_token!(self, Token::ParenClose, cond.span(),
+                        else => return Some(Expr::Error.to_spanned(span)));
+                    let body = self.parse_expr_or_block(span)?;
+                    (cond, body)
+                }}
+                let (cond, body) = parse_elif_branch!(span);
+                let mut end_span = body.span();
+                let mut elifs = Vec::<_>::from_iter([(Box::new(cond), body)]);
+                let mut else_ = Option::<ExprOrBlock>::None;
+                while let Some(token) = self.tokens.peek() {
+                    let Some(span) = match_into!(token.as_pair(), (Token::Else, span) => span)
+                    else {
+                        break;
+                    };
+                    self.tokens.next();
+                    match self.expect_peek_token(span)?.as_pair() {
+                        (Token::If, span) => {
+                            self.tokens.next();
+                            let (cond, body) = parse_elif_branch!(span);
+                            end_span = body.span();
+                            elifs.push((Box::new(cond), body))
+                        }
+                        _ => {
+                            let body = self.parse_expr_or_block(span)?;
+                            end_span = body.span();
+                            else_ = Some(body);
+                            break;
+                        }
+                    }
+                }
+                Some(Expr::If(elifs, else_).to_spanned(start_span.join(end_span)))
+            }
             Token::Goto => {
                 self.tokens.next();
                 if let Some((ident, ident_span)) = self.expect_ident(span).map(Spanned::into_pair) {

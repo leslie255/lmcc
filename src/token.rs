@@ -686,7 +686,9 @@ impl Iterator for TokenStream {
                     continue;
                 }
 
-                (i, c) if c.is_alphabetic() || c == '_' => self.take_ident_or_keyword(i),
+                (i, c) if c.is_alphabetic() || c == '_' || c == '$' => {
+                    self.take_ident_or_keyword(i)
+                }
                 (i, c) if c.is_numeric() => self.take_number(i, c),
                 (i, '\'') => Some(
                     self.take_char_literal(i)

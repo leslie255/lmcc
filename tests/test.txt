@@ -10,7 +10,7 @@ case 0:
 
 default:
 
-a[i].x->y;
+x[i].x->y;
 
 while (true) f();
 while (true) {}

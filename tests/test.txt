@@ -10,4 +10,4 @@ case 0:
 
 default:
 
-a[i];
+a[i].x->y;

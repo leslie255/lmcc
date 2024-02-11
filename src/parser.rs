@@ -785,6 +785,31 @@ impl Parser {
         Some(Expr::Call(Box::new(callee), args).to_spanned(span))
     }
 
+    /// Start with the first `.` or `->` not consumed.
+    fn parse_field_path(&mut self, root: Spanned<Expr>) -> Option<Spanned<Expr>> {
+        let mut items = Vec::<FieldPathItem>::new();
+        let mut end_span = root.span();
+        while let Some(token) = self.tokens.peek() {
+            match token.as_pair() {
+                (Token::Dot, span) => {
+                    self.tokens.next();
+                    let ident = self.expect_ident(span)?;
+                    end_span = ident.span();
+                    items.push(FieldPathItem::Dir(span, ident));
+                }
+                (Token::Arrow, span) => {
+                    self.tokens.next();
+                    let ident = self.expect_ident(span)?;
+                    end_span = ident.span();
+                    items.push(FieldPathItem::Ind(span, ident));
+                }
+                _ => break,
+            }
+        }
+        let span = root.span().join(end_span);
+        Some(Expr::FieldPath(Box::new(root), items).to_spanned(span))
+    }
+
     fn parse_expr(&mut self, prev_span: Span, prec: u16) -> Option<Spanned<Expr>> {
         let token = self.expect_peek_token(prev_span)?;
         let span = token.span();
@@ -1052,7 +1077,9 @@ impl Parser {
                     let span = expr.span().join(end_span);
                     expr = Expr::Subscript(Box::new(expr), Box::new(operand)).to_spanned(span);
                 }
-                Token::Dot => todo!("member access"),
+                Token::Dot => {
+                    expr = self.parse_field_path(expr)?;
+                }
                 Token::Arrow => todo!("indirect member access"),
                 Token::AddAdd => postfix_op!(PostfixOpKind::PostInc),
                 Token::SubSub => postfix_op!(PostfixOpKind::PostDec),

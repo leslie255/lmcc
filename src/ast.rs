@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    error::Spanned,
+    error::{Span, Spanned},
     token::NumValue,
     utils::{DoInBetween, IdentStr},
 };
@@ -36,6 +36,9 @@ pub enum Expr {
     Continue,
     Case(Box<Spanned<Expr>>),
     Default,
+    /// Representation for member access expressions.
+    /// `expr.field0->field1`.
+    FieldPath(Box<Spanned<Expr>>, Vec<FieldPathItem>),
 }
 impl Expr {
     pub fn omits_semicolon(&self) -> bool {
@@ -46,6 +49,9 @@ impl Expr {
         }
     }
 }
+
+/// Unrelated to the term "kind" in FP languages.
+/// A type is made of a `TyKind` wrapped with `const`ness and `volatile`ness.
 #[derive(Clone, PartialEq, Eq)]
 pub enum TyKind {
     Int(Signness, IntSize),
@@ -255,7 +261,6 @@ pub struct Signature {
     pub args: Vec<(Ty, Option<IdentStr>)>,
 }
 
-/// Used in decl list.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeclItem {
     Var(
@@ -270,6 +275,16 @@ pub enum DeclItem {
         IdentStr,
         Option<Vec<Spanned<Expr>>>,
     ),
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum FieldPathItem {
+    /// Direct member accessing (`.`).
+    /// Includes span for the `.` token.
+    Dir(Span, Spanned<IdentStr>),
+    /// Indirect member accessing (`->`).
+    /// Includes span for the `->` token.
+    Ind(Span, Spanned<IdentStr>),
 }
 
 impl Debug for Signature {
@@ -363,6 +378,15 @@ impl Debug for Ty {
             TyKind::Typename(name) => write!(f, "{}{}typename {name:?}", const_!(), volatile!()),
             TyKind::Void => write!(f, "{}{}void", const_!(), volatile!()),
             TyKind::Error => write!(f, "{}{}ERROR", const_!(), volatile!()),
+        }
+    }
+}
+
+impl Debug for FieldPathItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Dir(_, ident) => write!(f, "FieldPathItem(.{ident:?})"),
+            Self::Ind(_, ident) => write!(f, "FieldPathItem(->{ident:?})"),
         }
     }
 }

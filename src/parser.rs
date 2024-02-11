@@ -673,6 +673,82 @@ impl Parser {
         Some(body.to_spanned(start_span.join(prev_span)))
     }
 
+    /// Start with opening paren already consumed.
+    fn parse_paren(&mut self, prev_span: Span) -> Option<Spanned<Expr>> {
+        macro expect_paren_close($prev_span:expr) {
+            match self.tokens.peek().map(Spanned::as_pair) {
+                Some((Token::ParenClose, span)) => {
+                    self.tokens.next();
+                    span
+                }
+                Some((_, span)) => {
+                    self.err_reporter
+                        .report(&Error::ExpectToken(Token::ParenClose).to_spanned(span));
+                    return Some(Expr::Error.to_spanned(prev_span.join($prev_span)));
+                }
+                None => {
+                    self.err_reporter.report(
+                        &Error::ExpectToken(Token::ParenClose).to_spanned($prev_span.tail()),
+                    );
+                    return Some(Expr::Error.to_spanned(prev_span.join($prev_span)));
+                }
+            }
+        }
+        let (token, span) = self.expect_peek_token(prev_span)?.as_pair();
+        match token {
+            Token::Char
+            | Token::Const
+            | Token::Double
+            | Token::Enum
+            | Token::Float
+            | Token::Int
+            | Token::Long
+            | Token::Restrict
+            | Token::Short
+            | Token::Signed
+            | Token::Struct
+            | Token::Union
+            | Token::Unsigned
+            | Token::Void
+            | Token::Volatile
+            | Token::Bool
+            | Token::Complex
+            | Token::Imaginary => {
+                let decl_speci = DeclSpecifiers::default();
+                let decl_speci = self.parse_decl_speci(prev_span, decl_speci);
+                let ty = self.deduce_ty_speci(&decl_speci);
+                let closing_paren_span = expect_paren_close!(decl_speci.span());
+                let expr = self.parse_expr(closing_paren_span, 2)?;
+                let span = prev_span.join(expr.span());
+                Some(Expr::Typecast(ty.into_inner(), Box::new(expr)).to_spanned(span))
+            }
+            &Token::Ident(s) => {
+                if self.is_typename(s) {
+                    self.tokens.next();
+                    let mut decl_speci = DeclSpecifiers::default();
+                    decl_speci.add_typename(s.to_spanned(span));
+                    let decl_speci = self.parse_decl_speci(prev_span, decl_speci);
+                    let ty = self.deduce_ty_speci(&decl_speci);
+                    let closing_paren_span = expect_paren_close!(decl_speci.span());
+                    let expr = self.parse_expr(closing_paren_span, 2)?;
+                    let span = prev_span.join(expr.span());
+                    Some(Expr::Typecast(ty.into_inner(), Box::new(expr)).to_spanned(span))
+                } else {
+                    let expr = self.parse_expr(span, 16)?;
+                    expect_paren_close!(expr.span());
+                    // FIXME: ensure it's not a statement.
+                    Some(expr)
+                }
+            }
+            _ => {
+                let expr = self.parse_expr(span, 16)?;
+                expect_paren_close!(expr.span());
+                // FIXME: ensure it's not a statement.
+                Some(expr)
+            }
+        }
+    }
+
     fn parse_expr(&mut self, prev_span: Span, prec: u16) -> Option<Spanned<Expr>> {
         let token = self.expect_peek_token(prev_span)?;
         let span = token.span();
@@ -819,7 +895,10 @@ impl Parser {
                     )),
                 )
             }
-            Token::ParenOpen => todo!("parens"),
+            Token::ParenOpen => {
+                self.tokens.next();
+                self.parse_paren(span)
+            }
             Token::Case
             | Token::Default
             | Token::Else

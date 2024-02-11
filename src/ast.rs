@@ -31,6 +31,7 @@ pub enum Expr {
     Return(Option<Box<Spanned<Expr>>>),
     Labal(IdentStr),
     Goto(IdentStr),
+    Typecast(Ty, Box<Spanned<Expr>>),
     Break,
     Continue,
 }

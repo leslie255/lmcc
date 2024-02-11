@@ -302,7 +302,7 @@ impl TokenStream {
     fn take_ident_or_keyword(&mut self, start_idx: SourceIdx) -> Option<Spanned<Token>> {
         let mut end_idx = start_idx;
         while let Some(&(i, c)) = self.chars.peek() {
-            if !(c.is_alphanumeric() || c == '_') {
+            if !(c.is_alphanumeric() || c == '_' || c == '$') {
                 break;
             }
             end_idx = i;

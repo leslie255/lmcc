@@ -14,3 +14,5 @@ Parser TODO:
 - `for` statements.
 - `struct`/`enum`/`union` declarations (`struct T x;` case is parsable, not `struct T { ... } x;` case).
 - List decl.
+- Flexible `;` rules.
+- Better error recovery.

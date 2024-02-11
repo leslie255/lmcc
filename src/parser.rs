@@ -491,11 +491,6 @@ impl Parser {
             ensure_no!(union_, ConflictingTypeSpecifier);
             ensure_no!(typename, ConflictingTypeSpecifier);
             TyKind::Bool
-        } else if let Some(signness) = decl_speci.signness {
-            ensure_no!(struct_, ConflictingTypeSpecifier);
-            ensure_no!(union_, ConflictingTypeSpecifier);
-            ensure_no!(typename, ConflictingTypeSpecifier);
-            TyKind::Int(signness.into_inner(), IntSize::_32)
         } else if let Some(typename) = decl_speci.typename {
             ensure_no!(signness);
             ensure_no!(struct_, ConflictingTypeSpecifier);
@@ -508,6 +503,11 @@ impl Parser {
         } else if let Some(union_) = &decl_speci.union_ {
             ensure_no!(signness);
             TyKind::Union(union_.0, union_.1.clone())
+        } else if let Some(signness) = decl_speci.signness {
+            ensure_no!(struct_, ConflictingTypeSpecifier);
+            ensure_no!(union_, ConflictingTypeSpecifier);
+            ensure_no!(typename, ConflictingTypeSpecifier);
+            TyKind::Int(signness.into_inner(), IntSize::_32)
         } else {
             self.err_reporter
                 .report(&Error::ExpectTy.to_spanned(decl_speci.span()));

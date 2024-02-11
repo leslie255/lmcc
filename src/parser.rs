@@ -951,8 +951,22 @@ impl Parser {
                 };
                 Some(Expr::Case(Box::new(expr)).to_spanned(span.join(end_span)))
             }
-            Token::Default
-            | Token::Else
+            Token::Default => {
+                self.tokens.next();
+                let end_span = match self.expect_peek_token(span)?.as_pair() {
+                    (Token::Colon, span) => {
+                        self.tokens.next();
+                        span
+                    }
+                    (_, span) => {
+                        self.err_reporter
+                            .report(&Error::ExpectToken(Token::Colon).to_spanned(span));
+                        span
+                    }
+                };
+                Some(Expr::Default.to_spanned(span.join(end_span)))
+            }
+            Token::Else
             | Token::AddEq
             | Token::SubEq
             | Token::Arrow

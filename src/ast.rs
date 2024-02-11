@@ -34,12 +34,13 @@ pub enum Expr {
     Break,
     Continue,
     Case(Box<Spanned<Expr>>),
+    Default,
 }
 impl Expr {
     pub fn omits_semicolon(&self) -> bool {
         match self {
             Expr::Decl(DeclItem::Func(_, _, _, body)) => body.is_some(),
-            Expr::Error | Expr::Labal(..) |Expr::Case(..)=> true,
+            Expr::Error | Expr::Labal(..) | Expr::Case(..) | Expr::Default => true,
             _ => false,
         }
     }

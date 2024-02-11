@@ -3,7 +3,6 @@ use std::{collections::HashMap, fmt::Debug, iter::Peekable, rc::Rc, vec};
 use crate::{
     ast::*,
     error::{Error, ErrorReporter, Span, Spanned, ToSpanned},
-    intern_string,
     token::NumValue,
     utils::{fixme, match_into, match_into_unchecked, IdentStr},
 };
@@ -352,11 +351,9 @@ impl Parser {
                     (None, Some(fields), span)
                 }
                 _ => {
-                    self.err_reporter.report(
-                        &Error::ExpectTokens(&[Token::Ident(intern_string("")), Token::BraceOpen])
-                            .to_spanned($start_span),
-                    );
-                    break;
+                    self.err_reporter
+                        .report(&Error::AnonStruct.to_spanned($start_span));
+                    (None, None, $start_span)
                 }
             }
         }}
@@ -825,25 +822,27 @@ impl Parser {
                 }
                 _ => {
                     let expr = self.parse_expr(end_span, 16)?;
-                    let span = expr.span();
-                    end_span = self.consume_semicolons(span, true);
+                    end_span = expr.span();
+                    let mut omits_semicolon = expr.allow_omit_semicolon();
                     match expr.into_inner() {
                         Expr::Decl(DeclItem::Var(speci, ty, name, rhs)) => {
                             if speci != VarSpecifier::Unspecified {
                                 self.err_reporter
-                                    .report(&Error::StorageClassInStructUnion.to_spanned(span));
+                                    .report(&Error::StorageClassInStructUnion.to_spanned(end_span));
                             }
                             rhs.inspect(|rhs| {
                                 self.err_reporter
                                     .report(&Error::RhsInStructUnion.to_spanned(rhs.span()))
                             });
                             fields.push((ty.into_inner(), name));
+                            omits_semicolon = true;
                         }
                         _ => {
                             self.err_reporter
-                                .report(&Error::NonDeclInStructUnion.to_spanned(span));
+                                .report(&Error::NonDeclInStructUnion.to_spanned(end_span));
                         }
                     }
+                    end_span = self.consume_semicolons(end_span, omits_semicolon);
                 }
             }
         }

@@ -34,6 +34,6 @@ if (true) {} else if (true) {} else {}
 struct T {int x; int y;} x;
 struct {int x; int y;} x;
 struct T x;
-struct T {int x; int y;};
+struct T {int x; int y};
 
 union T {int x; int y;} x;

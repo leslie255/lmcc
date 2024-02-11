@@ -52,6 +52,9 @@ pub enum Error<'a> {
     IllegalArrLen,
     ArrAsFuncRet,
     MissingSemicolon,
+    NonDeclInStructUnion,
+    StorageClassInStructUnion,
+    RhsInStructUnion,
 }
 
 impl Error<'_> {

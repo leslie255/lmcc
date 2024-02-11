@@ -30,3 +30,11 @@ for (x;y;z) {}
 if (true) {}
 if (true) {} else {}
 if (true) {} else if (true) {} else {}
+
+struct T {int x; int y;} x;
+struct {int x; int y;} x;
+struct T x;
+
+union T {int x; int y;} x;
+union {int x; int y;} x;
+union T x;

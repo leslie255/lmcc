@@ -1,8 +1,9 @@
-use std::{collections::HashMap, fmt::Debug, iter::Peekable, rc::Rc};
+use std::{collections::HashMap, fmt::Debug, iter::Peekable, rc::Rc, vec};
 
 use crate::{
     ast::*,
     error::{Error, ErrorReporter, Span, Spanned, ToSpanned},
+    intern_string,
     token::NumValue,
     utils::{fixme, match_into, match_into_unchecked, IdentStr},
 };
@@ -19,7 +20,7 @@ pub struct Parser {
     typenames: Vec<HashMap<IdentStr, Ty>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 struct DeclSpecifiers {
     // --- storage-class (linkage-class) ---
     static_: Option<Span>,
@@ -41,6 +42,8 @@ struct DeclSpecifiers {
     float: Option<Span>,
     double: Option<Span>,
     bool: Option<Span>,
+    struct_: Option<Spanned<(Option<IdentStr>, Option<StructFields>)>>,
+    union_: Option<Spanned<(Option<IdentStr>, Option<StructFields>)>>,
 
     // --- type name ---
     typename: Option<Spanned<IdentStr>>,
@@ -56,6 +59,7 @@ impl DeclSpecifiers {
     /// Returns `Err(())` if the added token is not a decl specifier.
     /// If the added token **is** a decl specifier but there is an error (e.g. conflicting signness), reports error to `err_reporter` and returns `Ok(())`.
     /// Use `add_typename` for adding a typename.
+    /// Use `add_struct`, `add_union`, `add_enum` for adding a struct, union, enum.
     fn add_token(
         &mut self,
         err_reporter: &ErrorReporter,
@@ -142,9 +146,28 @@ impl DeclSpecifiers {
     /// Ident must be made sure to be a typename from context, otherwise it should be treated as a normal ident expression, the ambiguous cases (e.g. `a * b`) would be dealt with later down the line.
     fn add_typename(&mut self, typename: Spanned<IdentStr>) {
         match self.typename {
-            Some(name) => panic!("calling `add_typename` multiple times on one `DeclSpecifier` (existing typename {:?} @ {:?}", name, name.span()),
             None => self.typename = Some(typename),
+            Some(name) => panic!("calling `add_typename` multiple times on one `DeclSpecifier` (existing typename {:?} @ {:?})", name, name.span()),
         }
+    }
+    fn add_struct(&mut self, struct_: Spanned<(Option<IdentStr>, Option<StructFields>)>) {
+        match &self.struct_ {
+            None => self.struct_ = Some(struct_),
+            Some(struct_) => panic!("calling `add_struct` multiple times on one `DeclSpecifier` (existing: {:?} @ {:?})", struct_, struct_.span()),
+        }
+    }
+    fn add_union(&mut self, union_: Spanned<(Option<IdentStr>, Option<StructFields>)>) {
+        match &self.union_ {
+            None => self.union_ = Some(union_),
+            Some(union_) => panic!(
+                "calling `add_union` multiple times on one `DeclSpecifier` (existing: {:?} @ {:?})",
+                union_,
+                union_.span()
+            ),
+        }
+    }
+    fn _add_enum(&mut self) {
+        todo!()
     }
     /// For invalid combinations of specifiers, report the error and return a guess of what the user meant.
     fn try_into_var_speci(&self, err_reporter: &ErrorReporter) -> VarSpecifier {
@@ -203,6 +226,8 @@ impl DeclSpecifiers {
 }
 
 /// Returns the span.
+/// The default behavior on unexpected token is report error and `return None`,
+/// but this could be customized using `else => expr`, to replace the `return None` part.
 macro expect_token {
     ($self:expr, $token:path, $prev_span:expr, else => $else:expr $(,)?) => {
         match $self.expect_peek_token($prev_span)?.as_pair() {
@@ -220,7 +245,7 @@ macro expect_token {
     },
     ($self:expr, $token:path, $prev_span:expr $(,)?) => {{
         let prev_span = $prev_span; // prevent twice-evaluation
-        expect_token!($self, $token, prev_span, else => prev_span)
+        expect_token!($self, $token, prev_span, else => return None)
     }},
 }
 
@@ -294,30 +319,79 @@ impl Parser {
 
     /// Parse decl specifiers.
     /// Sometimes after parsing the decl specifiers the next token is also taken.
-    #[must_use]
     fn parse_decl_speci(
         &mut self,
         prev_span: Span,
         mut decl_speci: DeclSpecifiers,
-    ) -> Spanned<DeclSpecifiers> {
+    ) -> Option<Spanned<DeclSpecifiers>> {
         let mut end_span = prev_span;
+        macro parse_struct_union($start_span:expr) {{
+            let token = self.expect_peek_token($start_span)?;
+            end_span = token.span();
+            match token.inner() {
+                &Token::Ident(name) => {
+                    self.tokens.next();
+                    let fields: Option<StructFields> =
+                        match self.tokens.peek().map(Spanned::as_pair) {
+                            Some((Token::BraceOpen, span)) => {
+                                self.tokens.next();
+                                let (fields, span) = self.parse_struct_fields(span)?;
+                                end_span = span;
+                                Some(fields)
+                            }
+                            _ => None,
+                        };
+                    let span = $start_span.join(end_span);
+                    (Some(name), fields, span)
+                }
+                Token::BraceOpen => {
+                    self.tokens.next();
+                    let (fields, span) = self.parse_struct_fields($start_span)?;
+                    end_span = span;
+                    let span = $start_span.join(end_span);
+                    (None, Some(fields), span)
+                }
+                _ => {
+                    self.err_reporter.report(
+                        &Error::ExpectTokens(&[Token::Ident(intern_string("")), Token::BraceOpen])
+                            .to_spanned($start_span),
+                    );
+                    break;
+                }
+            }
+        }}
         while let Some(token) = self.tokens.peek() {
             if decl_speci.add_token(&self.err_reporter, token).is_ok() {
                 end_span = token.span();
                 self.tokens.next();
-            } else if let &Token::Ident(s) = token.inner() {
-                let span = token.span();
-                if self.is_typename(s) {
-                    self.tokens.next();
-                    decl_speci.add_typename(s.to_spanned(span));
-                } else {
-                    break;
-                }
             } else {
-                break;
+                match token.as_pair() {
+                    (&Token::Ident(s), span) => {
+                        if self.is_typename(s) {
+                            {
+                                self.tokens.next();
+                                decl_speci.add_typename(s.to_spanned(span));
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    (Token::Struct, span) => {
+                        self.tokens.next();
+                        let (name, fields, span) = parse_struct_union!(span);
+                        decl_speci.add_struct((name, fields).to_spanned(span));
+                    }
+                    (Token::Union, span) => {
+                        self.tokens.next();
+                        let (name, fields, span) = parse_struct_union!(span);
+                        decl_speci.add_union((name, fields).to_spanned(span));
+                    }
+                    (Token::Enum, _) => todo!(),
+                    _ => break,
+                }
             }
         }
-        decl_speci.to_spanned(prev_span.join(end_span))
+        Some(decl_speci.to_spanned(prev_span.join(end_span)))
     }
 
     /// Deduce a type from decl specifiers.
@@ -328,16 +402,36 @@ impl Parser {
                 .map(|s| s.into_inner())
                 .unwrap_or(Signness::Signed)
         }
-        macro ensure_no_signness() {
-            if let Some(signness) = decl_speci.signness {
-                self.err_reporter
-                    .report(&Error::InvalidSignnessFlag.to_spanned(signness.span()));
-            }
-        }
-        macro ensure_no($speci:tt, $err:tt $(,)?) {
-            if let Some(span) = decl_speci.$speci {
-                self.err_reporter.report(&Error::$err.to_spanned(span));
-            }
+        macro ensure_no {
+            (struct_, $err:tt $(,)?) => {
+                if let Some(struct_) = &decl_speci.struct_ {
+                    self.err_reporter
+                        .report(&Error::$err.to_spanned(struct_.span()));
+                }
+            },
+            (union_, $err:tt $(,)?) => {
+                if let Some(union_) = &decl_speci.union_ {
+                    self.err_reporter
+                        .report(&Error::$err.to_spanned(union_.span()));
+                }
+            },
+            (signness $(,)?) => {
+                if let Some(signness) = decl_speci.signness {
+                    self.err_reporter
+                        .report(&Error::InvalidSignnessFlag.to_spanned(signness.span()));
+                }
+            },
+            (typename, $err:tt $(,)?) => {
+                if let Some(typename) = decl_speci.typename {
+                    self.err_reporter
+                        .report(&Error::$err.to_spanned(typename.span()));
+                }
+            },
+            ($speci:tt, $err:tt $(,)?) => {
+                if let Some(span) = decl_speci.$speci {
+                    self.err_reporter.report(&Error::$err.to_spanned(span));
+                }
+            },
         }
         // TODO: more accurate span.
         if decl_speci.char.is_some() {
@@ -348,6 +442,9 @@ impl Parser {
             ensure_no!(float, ConflictingTypeSpecifier);
             ensure_no!(double, ConflictingTypeSpecifier);
             ensure_no!(bool, ConflictingTypeSpecifier);
+            ensure_no!(struct_, ConflictingTypeSpecifier);
+            ensure_no!(union_, ConflictingTypeSpecifier);
+            ensure_no!(typename, ConflictingTypeSpecifier);
             TyKind::Int(signness!(), IntSize::_8)
         } else if decl_speci.short.is_some() {
             ensure_no!(int, ConflictingTypeSpecifier);
@@ -355,34 +452,62 @@ impl Parser {
             ensure_no!(float, ConflictingTypeSpecifier);
             ensure_no!(double, ConflictingTypeSpecifier);
             ensure_no!(bool, ConflictingTypeSpecifier);
+            ensure_no!(struct_, ConflictingTypeSpecifier);
+            ensure_no!(union_, ConflictingTypeSpecifier);
+            ensure_no!(typename, ConflictingTypeSpecifier);
             TyKind::Int(signness!(), IntSize::_16)
         } else if decl_speci.int.is_some() {
             ensure_no!(long0, ConflictingTypeSpecifier);
             ensure_no!(float, ConflictingTypeSpecifier);
             ensure_no!(double, ConflictingTypeSpecifier);
             ensure_no!(bool, ConflictingTypeSpecifier);
+            ensure_no!(struct_, ConflictingTypeSpecifier);
+            ensure_no!(union_, ConflictingTypeSpecifier);
+            ensure_no!(typename, ConflictingTypeSpecifier);
             TyKind::Int(signness!(), IntSize::_32)
         } else if decl_speci.long0.is_some() {
             ensure_no!(float, ConflictingTypeSpecifier);
             ensure_no!(double, ConflictingTypeSpecifier);
             ensure_no!(bool, ConflictingTypeSpecifier);
+            ensure_no!(struct_, ConflictingTypeSpecifier);
+            ensure_no!(union_, ConflictingTypeSpecifier);
+            ensure_no!(typename, ConflictingTypeSpecifier);
             TyKind::Int(signness!(), IntSize::_64)
         } else if decl_speci.float.is_some() {
             ensure_no!(double, ConflictingTypeSpecifier);
             ensure_no!(bool, ConflictingTypeSpecifier);
-            ensure_no_signness!();
+            ensure_no!(signness);
+            ensure_no!(struct_, ConflictingTypeSpecifier);
+            ensure_no!(union_, ConflictingTypeSpecifier);
+            ensure_no!(typename, ConflictingTypeSpecifier);
             TyKind::Float(FloatSize::_32)
         } else if decl_speci.double.is_some() {
-            ensure_no_signness!();
+            ensure_no!(signness);
             ensure_no!(bool, ConflictingTypeSpecifier);
+            ensure_no!(struct_, ConflictingTypeSpecifier);
+            ensure_no!(union_, ConflictingTypeSpecifier);
+            ensure_no!(typename, ConflictingTypeSpecifier);
             TyKind::Float(FloatSize::_64)
         } else if decl_speci.bool.is_some() {
-            ensure_no_signness!();
+            ensure_no!(signness);
+            ensure_no!(struct_, ConflictingTypeSpecifier);
+            ensure_no!(union_, ConflictingTypeSpecifier);
+            ensure_no!(typename, ConflictingTypeSpecifier);
             TyKind::Bool
         } else if let Some(signness) = decl_speci.signness {
+            ensure_no!(struct_, ConflictingTypeSpecifier);
+            ensure_no!(union_, ConflictingTypeSpecifier);
+            ensure_no!(typename, ConflictingTypeSpecifier);
             TyKind::Int(signness.into_inner(), IntSize::_32)
         } else if let Some(typename) = decl_speci.typename {
+            ensure_no!(struct_, ConflictingTypeSpecifier);
+            ensure_no!(union_, ConflictingTypeSpecifier);
             TyKind::Typename(*typename)
+        } else if let Some(struct_) = &decl_speci.struct_ {
+            ensure_no!(union_, ConflictingTypeSpecifier);
+            TyKind::Struct(struct_.0, struct_.1.clone())
+        } else if let Some(union_) = &decl_speci.union_ {
+            TyKind::Union(union_.0, union_.1.clone())
         } else {
             self.err_reporter
                 .report(&Error::ExpectTy.to_spanned(decl_speci.span()));
@@ -519,7 +644,7 @@ impl Parser {
             loop {
                 let mut prev_span = prev_span;
                 let decl_speci = DeclSpecifiers::default();
-                let decl_speci = self.parse_decl_speci(prev_span, decl_speci);
+                let decl_speci = self.parse_decl_speci(prev_span, decl_speci)?;
                 {
                     macro ensure_no($keyword:tt, $err:tt $(,)?) {
                         decl_speci.$keyword.inspect(|&span| {
@@ -650,7 +775,7 @@ impl Parser {
     /// Unlike most `parse_` functions, this function does not start with the first token already consumed.
     fn parse_decl(&mut self, prev_span: Span) -> Option<Spanned<Expr>> {
         let decl_speci = DeclSpecifiers::default();
-        let decl_speci = self.parse_decl_speci(prev_span, decl_speci);
+        let decl_speci = self.parse_decl_speci(prev_span, decl_speci)?;
         self.parse_decl_content(prev_span, &decl_speci)
     }
 
@@ -679,6 +804,47 @@ impl Parser {
         Some(body.to_spanned(start_span.join(prev_span)))
     }
 
+    /// Also works on union fields.
+    /// Returns the fields and the end span.
+    fn parse_struct_fields(&mut self, prev_span: Span) -> Option<(StructFields, Span)> {
+        let mut end_span = prev_span;
+        let mut fields: StructFields = Vec::new();
+        end_span = self.consume_semicolons(end_span, true);
+        loop {
+            let (token, span) = self.expect_peek_token(end_span)?.as_pair();
+            end_span = span;
+            match token {
+                Token::BraceClose => {
+                    self.tokens.next();
+                    break;
+                }
+                _ => {
+                    let expr = self.parse_expr(end_span, 16)?;
+                    let span = expr.span();
+                    end_span = self.consume_semicolons(span, true);
+                    match expr.into_inner() {
+                        Expr::Decl(DeclItem::Var(speci, ty, name, rhs)) => {
+                            if speci != VarSpecifier::Unspecified {
+                                self.err_reporter
+                                    .report(&Error::StorageClassInStructUnion.to_spanned(span));
+                            }
+                            rhs.inspect(|rhs| {
+                                self.err_reporter
+                                    .report(&Error::RhsInStructUnion.to_spanned(rhs.span()))
+                            });
+                            fields.push((ty.into_inner(), name));
+                        }
+                        _ => {
+                            self.err_reporter
+                                .report(&Error::NonDeclInStructUnion.to_spanned(span));
+                        }
+                    }
+                }
+            }
+        }
+        Some((fields, end_span))
+    }
+
     /// Start with opening paren already consumed.
     fn parse_paren(&mut self, prev_span: Span) -> Option<Spanned<Expr>> {
         let (token, span) = self.expect_peek_token(prev_span)?.as_pair();
@@ -702,14 +868,9 @@ impl Parser {
             | Token::Complex
             | Token::Imaginary => {
                 let decl_speci = DeclSpecifiers::default();
-                let decl_speci = self.parse_decl_speci(prev_span, decl_speci);
+                let decl_speci = self.parse_decl_speci(prev_span, decl_speci)?;
                 let ty = self.deduce_ty_speci(&decl_speci);
-                let closing_paren_span = expect_token!(
-                    self,
-                    Token::ParenClose,
-                    decl_speci.span(),
-                    else => return Some(Expr::Error.to_spanned(decl_speci.span()))
-                );
+                let closing_paren_span = expect_token!(self, Token::ParenClose, decl_speci.span());
                 let expr = self.parse_expr(closing_paren_span, 2)?;
                 let span = prev_span.join(expr.span());
                 Some(Expr::Typecast(ty.into_inner(), Box::new(expr)).to_spanned(span))
@@ -719,14 +880,10 @@ impl Parser {
                     self.tokens.next();
                     let mut decl_speci = DeclSpecifiers::default();
                     decl_speci.add_typename(s.to_spanned(span));
-                    let decl_speci = self.parse_decl_speci(prev_span, decl_speci);
+                    let decl_speci = self.parse_decl_speci(prev_span, decl_speci)?;
                     let ty = self.deduce_ty_speci(&decl_speci);
-                    let closing_paren_span = expect_token!(
-                        self,
-                        Token::ParenClose,
-                        decl_speci.span(),
-                        else => return Some(Expr::Error.to_spanned(decl_speci.span()))
-                    );
+                    let closing_paren_span =
+                        expect_token!(self, Token::ParenClose, decl_speci.span());
                     let expr = self.parse_expr(closing_paren_span, 2)?;
                     let span = prev_span.join(expr.span());
                     Some(Expr::Typecast(ty.into_inner(), Box::new(expr)).to_spanned(span))
@@ -862,7 +1019,7 @@ impl Parser {
                 if self.is_typename(s) {
                     let mut decl_speci = DeclSpecifiers::default();
                     decl_speci.add_typename(s.to_spanned(span));
-                    let decl_speci = self.parse_decl_speci(span, decl_speci);
+                    let decl_speci = self.parse_decl_speci(span, decl_speci)?;
                     let expr = self.parse_decl_content(decl_speci.span(), &decl_speci);
                     expr.as_ref().inspect(|expr| match expr.inner() {
                         Expr::Decl(DeclItem::Var(VarSpecifier::Typedef, ty, name, _)) => {
@@ -940,11 +1097,9 @@ impl Parser {
             Token::While => {
                 self.tokens.next();
                 let start_span = span;
-                let span = expect_token!(self, Token::ParenOpen, span,
-                    else => return Some(Expr::Error.to_spanned(span)));
+                let span = expect_token!(self, Token::ParenOpen, span);
                 let cond = self.parse_expr(span, 16)?;
-                let span = expect_token!(self, Token::ParenClose, cond.span(),
-                    else => return Some(Expr::Error.to_spanned(span)));
+                let span = expect_token!(self, Token::ParenClose, cond.span());
                 let body = self.parse_expr_or_block(span)?;
                 let span = start_span.join(body.span());
                 Some(Expr::While(Box::new(cond), body).to_spanned(span))
@@ -954,23 +1109,18 @@ impl Parser {
                 let start_span = span;
                 let body = self.parse_expr_or_block(span)?;
                 let span = body.span();
-                let span = expect_token!(self, Token::While, span,
-                    else => return Some(Expr::Error.to_spanned(span)));
-                let span = expect_token!(self, Token::ParenOpen, span,
-                    else => return Some(Expr::Error.to_spanned(span)));
+                let span = expect_token!(self, Token::While, span);
+                let span = expect_token!(self, Token::ParenOpen, span);
                 let cond = self.parse_expr(span, 16)?;
-                let span = expect_token!(self, Token::ParenClose, cond.span(),
-                    else => return Some(Expr::Error.to_spanned(span)));
+                let span = expect_token!(self, Token::ParenClose, cond.span());
                 Some(Expr::DoWhile(body, Box::new(cond)).to_spanned(start_span.join(span)))
             }
             Token::Switch => {
                 self.tokens.next();
                 let start_span = span;
-                let span = expect_token!(self, Token::ParenOpen, span,
-                    else => return Some(Expr::Error.to_spanned(span)));
+                let span = expect_token!(self, Token::ParenOpen, span);
                 let cond = self.parse_expr(span, 16)?;
-                let span = expect_token!(self, Token::ParenClose, cond.span(),
-                    else => return Some(Expr::Error.to_spanned(span)));
+                let span = expect_token!(self, Token::ParenClose, cond.span());
                 let body = self.parse_expr_or_block(span)?;
                 let span = start_span.join(body.span());
                 Some(Expr::Switch(Box::new(cond), body).to_spanned(span))
@@ -978,19 +1128,17 @@ impl Parser {
             Token::For => {
                 self.tokens.next();
                 let start_span = span;
-                let span = expect_token!(self, Token::ParenOpen, span,
-                    else => return Some(Expr::Error.to_spanned(span)));
+                let span = expect_token!(self, Token::ParenOpen, span);
                 macro parse_fragment($prev_span:expr, $end_token:path) {{
                     let prev_span = $prev_span;
                     match self.expect_peek_token(prev_span)?.inner() {
                         $end_token => {
                             self.tokens.next();
                             (None, prev_span)
-                        },
+                        }
                         _ => {
                             let expr = self.parse_expr(prev_span, 16)?;
-                            let span = expect_token!(self, $end_token, expr.span(),
-                                else => return Some(Expr::Error.to_spanned(start_span.join(expr.span()))));
+                            let span = expect_token!(self, $end_token, expr.span());
                             (Some(expr), span)
                         }
                     }
@@ -1014,11 +1162,9 @@ impl Parser {
                 self.tokens.next();
                 let start_span = span;
                 macro parse_elif_branch($prev_span:expr) {{
-                    let span = expect_token!(self, Token::ParenOpen, $prev_span,
-                        else => return Some(Expr::Error.to_spanned(span)));
+                    let span = expect_token!(self, Token::ParenOpen, $prev_span);
                     let cond = self.parse_expr(span, 16)?;
-                    let span = expect_token!(self, Token::ParenClose, cond.span(),
-                        else => return Some(Expr::Error.to_spanned(span)));
+                    let span = expect_token!(self, Token::ParenClose, cond.span());
                     let body = self.parse_expr_or_block(span)?;
                     (cond, body)
                 }}

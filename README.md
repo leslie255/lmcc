@@ -10,7 +10,7 @@ Very WIP.
 
 Parser TODO:
 - Preprocessor/macros
-- `struct`/`enum`/`union` declarations (`struct T x;` case is parsable, not `struct T { ... } x;` case).
+- `enum`
 - List decl.
 - Function pointer types.
 - List/struct literals.

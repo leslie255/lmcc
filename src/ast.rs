@@ -81,13 +81,14 @@ pub enum TyKind {
     Bool,
     Ptr(Restrictness, Box<Ty>),
     FixedArr(Box<Ty>, u64),
-    Struct(IdentStr),
-    Union(IdentStr),
+    Struct(Option<IdentStr>, Option<StructFields>),
+    Union(Option<IdentStr>, Option<StructFields>),
     Enum(IdentStr),
     Typename(IdentStr),
     Void,
     Error,
 }
+pub type StructFields = Vec<(Ty, IdentStr)>;
 impl TyKind {
     pub fn to_ty(self, is_const: bool, is_volatile: bool) -> Ty {
         Ty {
@@ -408,6 +409,26 @@ impl Debug for Ty {
                 ""
             }
         }
+        macro write_struct_union_fields($fields:expr) {
+            match $fields {
+                Some(fields) => {
+                    write!(f, " {{")?;
+                    let f = fields.iter().try_do_in_between(
+                        f,
+                        |f| {
+                            if f.alternate() {
+                                write!(f, "; ")
+                            } else {
+                                write!(f, ";")
+                            }
+                        },
+                        |f, (ty, name)| write!(f, "{ty:?} {name:?}"),
+                    )?;
+                    write!(f, "}}")
+                }
+                None => Ok(()),
+            }
+        }
         match &self.kind {
             &TyKind::Int(sign, size) => {
                 if sign == Signness::Unsigned {
@@ -438,8 +459,22 @@ impl Debug for Ty {
                 },
             ),
             TyKind::FixedArr(ty, len) => write!(f, "{}{}{ty:?}[{len:?}]", const_!(), volatile!()),
-            TyKind::Struct(name) => write!(f, "{}{}struct {name:?}", const_!(), volatile!()),
-            TyKind::Union(name) => write!(f, "{}{}union {name:?}", const_!(), volatile!()),
+            TyKind::Struct(Some(name), fields) => {
+                write!(f, "{}{}struct {name:?}", const_!(), volatile!())?;
+                write_struct_union_fields!(fields)
+            }
+            TyKind::Struct(None, fields) => {
+                write!(f, "{}{}struct", const_!(), volatile!())?;
+                write_struct_union_fields!(fields)
+            }
+            TyKind::Union(Some(name), fields) => {
+                write!(f, "{}{}union {name:?}", const_!(), volatile!())?;
+                write_struct_union_fields!(fields)
+            }
+            TyKind::Union(None, fields) => {
+                write!(f, "{}{}union", const_!(), volatile!())?;
+                write_struct_union_fields!(fields)
+            }
             TyKind::Enum(name) => write!(f, "{}{}enum {name:?}", const_!(), volatile!()),
             TyKind::Typename(name) => write!(f, "{}{}typename {name:?}", const_!(), volatile!()),
             TyKind::Void => write!(f, "{}{}void", const_!(), volatile!()),

@@ -351,12 +351,16 @@ impl<'a, 'f> Display for ErrorFormatter<'a, 'f> {
             self.error.description(),
         )?;
 
+        // Print the line.
         for char in line0.chars() {
             match char {
                 '\t' => write!(f, "    ")?,
+                '\n' => break,
                 c => write!(f, "{}", c)?,
             }
         }
+
+        println!();
 
         // Tick pointing to the error spot in line.
         let mut chars = line0.chars();

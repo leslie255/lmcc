@@ -663,7 +663,7 @@ impl Parser {
                     } else {
                         if !omits_semicolon {
                             self.err_reporter
-                                .report(&Error::MissingSemicolon.to_spanned(span));
+                                .report(&Error::MissingSemicolon.to_spanned(span.tail()));
                         }
                     }
                 }
@@ -747,6 +747,43 @@ impl Parser {
                 Some(expr)
             }
         }
+    }
+
+    /// Start with `(` already consumed.
+    fn parse_call(&mut self, mut prev_span: Span, callee: Spanned<Expr>) -> Option<Spanned<Expr>> {
+        let opening_paren_span = prev_span;
+        let mut args = Vec::<Spanned<Expr>>::new();
+        if self.expect_peek_token(prev_span)?.inner() != &Token::ParenClose {
+            loop {
+                let expr = self.parse_expr(prev_span, 15)?;
+                prev_span = expr.span();
+                args.push(expr);
+                let (token, span) = self.expect_peek_token(prev_span)?.as_pair();
+                prev_span = span;
+                match token {
+                    Token::ParenClose => {
+                        self.tokens.next();
+                        break;
+                    }
+                    Token::Comma => {
+                        self.tokens.next();
+                        continue;
+                    }
+                    _ => {
+                        self.err_reporter.report(
+                            &Error::ExpectTokens(&[Token::Comma, Token::ParenClose])
+                                .to_spanned(span),
+                        );
+                        break;
+                    }
+                }
+            }
+        } else {
+            self.tokens.next();
+        }
+        let args = args.to_spanned(opening_paren_span.join(prev_span));
+        let span = callee.span().join(prev_span);
+        Some(Expr::Call(Box::new(callee), args).to_spanned(span))
     }
 
     fn parse_expr(&mut self, prev_span: Span, prec: u16) -> Option<Spanned<Expr>> {
@@ -957,21 +994,24 @@ impl Parser {
                 let span = expr.span().join(rhs.span());
                 expr = Expr::$exprkind(Box::new(expr), $kind, Box::new(rhs)).to_spanned(span);
             }}
-            macro postfix_op($kind:expr, $prec:expr) {{
-                if prec <= $prec {
-                    break;
-                }
+            macro postfix_op($kind:expr) {{
+                // The only two cases are postfix++ and postfix--, both having precedence of 1,
+                // so no need for precedence checking.
                 self.tokens.next();
                 let span = expr.span().join(span);
                 expr = Expr::PostfixOp(Box::new(expr), $kind).to_spanned(span);
             }}
             match token {
-                Token::ParenOpen => todo!("calls"),
+                // Precedence 1. No need for precedence checking here.
+                Token::ParenOpen => {
+                    self.tokens.next();
+                    expr = self.parse_call(prev_span, expr)?
+                }
                 Token::BraceOpen => todo!("subscripting"),
                 Token::Dot => todo!("member access"),
                 Token::Arrow => todo!("indirect member access"),
-                Token::AddAdd => postfix_op!(PostfixOpKind::PostInc, 1),
-                Token::SubSub => postfix_op!(PostfixOpKind::PostDec, 1),
+                Token::AddAdd => postfix_op!(PostfixOpKind::PostInc),
+                Token::SubSub => postfix_op!(PostfixOpKind::PostDec),
                 Token::Mul => infix_op!(InfixOp, InfixOpKind::Mul, 3),
                 Token::Div => infix_op!(InfixOp, InfixOpKind::Div, 3),
                 Token::Rem => infix_op!(InfixOp, InfixOpKind::Rem, 3),
@@ -1026,7 +1066,7 @@ impl Iterator for Parser {
         } else {
             if !expr.omits_semicolon() {
                 self.err_reporter
-                    .report(&Error::MissingSemicolon.to_spanned(span));
+                    .report(&Error::MissingSemicolon.to_spanned(span.tail()));
             }
         }
         Some(expr)

@@ -32,6 +32,7 @@ pub enum Expr {
     Labal(IdentStr),
     Goto(IdentStr),
     Typecast(Ty, Box<Spanned<Expr>>),
+    Call(Box<Spanned<Expr>>, Spanned<Vec<Spanned<Expr>>>),
     Break,
     Continue,
 }

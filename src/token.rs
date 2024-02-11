@@ -330,7 +330,7 @@ impl TokenStream {
             "int" => Token::Int,
             "long" => Token::Long,
             "register" => Token::Register,
-            "restrict" => Token::Restrict,
+            "restrict" | "__restrict" | "__restrict__" => Token::Restrict,
             "return" => Token::Return,
             "short" => Token::Short,
             "signed" => Token::Signed,

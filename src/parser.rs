@@ -202,6 +202,28 @@ impl DeclSpecifiers {
     }
 }
 
+/// Returns the span.
+macro expect_token {
+    ($self:expr, $token:path, $prev_span:expr, else => $else:expr $(,)?) => {
+        match $self.expect_peek_token($prev_span)?.as_pair() {
+            ($token, span) => {
+                $self.tokens.next();
+                span
+            }
+            (_, span) => {
+                $self
+                    .err_reporter
+                    .report(&Error::ExpectToken($token).to_spanned(span));
+                $else
+            }
+        }
+    },
+    ($self:expr, $token:path, $prev_span:expr $(,)?) => {{
+        let prev_span = $prev_span; // prevent twice-evaluation
+        expect_token!($self, $token, prev_span, else => prev_span)
+    }},
+}
+
 impl Parser {
     pub fn new(err_reporter: Rc<ErrorReporter>, tokens: Peekable<TokenStream>) -> Self {
         Self {
@@ -370,17 +392,6 @@ impl Parser {
 
     /// Parse (possible) array declarators.
     fn parse_arr_decl(&mut self, mut ty: Spanned<Ty>) -> Option<Spanned<Ty>> {
-        macro go_to_closing_bracket($prev_span:expr) {{
-            let token = self.expect_peek_token($prev_span)?;
-            let span = token.span();
-            if token.inner() == &Token::BracketClose {
-                self.tokens.next();
-            } else {
-                self.err_reporter
-                    .report(&Error::ExpectToken(Token::BracketClose).to_spanned(span));
-            }
-            span
-        }}
         while let Some(token) = self.tokens.peek() {
             let opening_bracket_span = token.span();
             match token.inner() {
@@ -398,7 +409,8 @@ impl Parser {
                         &Token::NumLiteral(NumValue::I(i)) => {
                             self.tokens.next();
                             let prev_ty_span = ty.span();
-                            let closing_bracket_span = go_to_closing_bracket!(span);
+                            let closing_bracket_span =
+                                expect_token!(self, Token::BracketClose, span);
                             if let Ok(i) = u64::try_from(i) {
                                 ty = TyKind::FixedArr(Box::new(ty.into_inner()), i)
                                     .to_ty(false, false)
@@ -413,7 +425,8 @@ impl Parser {
                         }
                         Token::NumLiteral(NumValue::F(_)) => {
                             let prev_ty_span = ty.span();
-                            let closing_bracket_span = go_to_closing_bracket!(span);
+                            let closing_bracket_span =
+                                expect_token!(self, Token::BracketClose, span);
                             self.err_reporter
                                 .report(&Error::IllegalArrLen.to_spanned(span));
                             ty = TyKind::Error
@@ -425,7 +438,8 @@ impl Parser {
                                 .report(&Error::Todo("variable array length").to_spanned(span));
                             let span = self.parse_expr(opening_bracket_span, 16)?.span();
                             let prev_ty_span = ty.span();
-                            let closing_bracket_span = go_to_closing_bracket!(span);
+                            let closing_bracket_span =
+                                expect_token!(self, Token::BracketClose, span);
                             ty = TyKind::Error
                                 .to_ty(false, false)
                                 .to_spanned(prev_ty_span.join(closing_bracket_span));
@@ -639,7 +653,7 @@ impl Parser {
     }
 
     /// Start with `{` token already consumed.
-    fn parse_block(&mut self, mut prev_span: Span) -> Option<Spanned<Vec<Spanned<Expr>>>> {
+    fn parse_block(&mut self, mut prev_span: Span) -> Option<Spanned<ExprBlock>> {
         self.enters_block();
         let start_span = prev_span;
         let mut body = Vec::<Spanned<Expr>>::new();
@@ -674,25 +688,6 @@ impl Parser {
 
     /// Start with opening paren already consumed.
     fn parse_paren(&mut self, prev_span: Span) -> Option<Spanned<Expr>> {
-        macro expect_paren_close($prev_span:expr) {
-            match self.tokens.peek().map(Spanned::as_pair) {
-                Some((Token::ParenClose, span)) => {
-                    self.tokens.next();
-                    span
-                }
-                Some((_, span)) => {
-                    self.err_reporter
-                        .report(&Error::ExpectToken(Token::ParenClose).to_spanned(span));
-                    return Some(Expr::Error.to_spanned(prev_span.join($prev_span)));
-                }
-                None => {
-                    self.err_reporter.report(
-                        &Error::ExpectToken(Token::ParenClose).to_spanned($prev_span.tail()),
-                    );
-                    return Some(Expr::Error.to_spanned(prev_span.join($prev_span)));
-                }
-            }
-        }
         let (token, span) = self.expect_peek_token(prev_span)?.as_pair();
         match token {
             Token::Char
@@ -716,7 +711,12 @@ impl Parser {
                 let decl_speci = DeclSpecifiers::default();
                 let decl_speci = self.parse_decl_speci(prev_span, decl_speci);
                 let ty = self.deduce_ty_speci(&decl_speci);
-                let closing_paren_span = expect_paren_close!(decl_speci.span());
+                let closing_paren_span = expect_token!(
+                    self,
+                    Token::ParenClose,
+                    decl_speci.span(),
+                    else => return Some(Expr::Error.to_spanned(decl_speci.span()))
+                );
                 let expr = self.parse_expr(closing_paren_span, 2)?;
                 let span = prev_span.join(expr.span());
                 Some(Expr::Typecast(ty.into_inner(), Box::new(expr)).to_spanned(span))
@@ -728,20 +728,25 @@ impl Parser {
                     decl_speci.add_typename(s.to_spanned(span));
                     let decl_speci = self.parse_decl_speci(prev_span, decl_speci);
                     let ty = self.deduce_ty_speci(&decl_speci);
-                    let closing_paren_span = expect_paren_close!(decl_speci.span());
+                    let closing_paren_span = expect_token!(
+                        self,
+                        Token::ParenClose,
+                        decl_speci.span(),
+                        else => return Some(Expr::Error.to_spanned(decl_speci.span()))
+                    );
                     let expr = self.parse_expr(closing_paren_span, 2)?;
                     let span = prev_span.join(expr.span());
                     Some(Expr::Typecast(ty.into_inner(), Box::new(expr)).to_spanned(span))
                 } else {
                     let expr = self.parse_expr(span, 16)?;
-                    expect_paren_close!(expr.span());
+                    expect_token!(self, Token::ParenClose, expr.span());
                     // FIXME: ensure it's not a statement.
                     Some(expr)
                 }
             }
             _ => {
                 let expr = self.parse_expr(span, 16)?;
-                expect_paren_close!(expr.span());
+                expect_token!(self, Token::ParenClose, expr.span());
                 // FIXME: ensure it's not a statement.
                 Some(expr)
             }
@@ -810,6 +815,20 @@ impl Parser {
         Some(Expr::FieldPath(Box::new(root), items).to_spanned(span))
     }
 
+    fn parse_expr_or_block(&mut self, prev_span: Span) -> Option<ExprOrBlock> {
+        match self.expect_peek_token(prev_span)?.as_pair() {
+            (Token::BraceOpen, span) => {
+                self.tokens.next();
+                let block = self.parse_block(span)?;
+                Some(block.into())
+            }
+            (_, span) => {
+                let expr = self.parse_expr(span, 16)?;
+                Some(expr.into())
+            }
+        }
+    }
+
     fn parse_expr(&mut self, prev_span: Span, prec: u16) -> Option<Spanned<Expr>> {
         let token = self.expect_peek_token(prev_span)?;
         let span = token.span();
@@ -820,6 +839,31 @@ impl Parser {
             Some(Expr::PrefixOp($opkind, Box::new(operand)).to_spanned(span.join(operand_span)))
         }}
         let expr = match token.inner() {
+            Token::Add => parse_prefix_op!(2, PrefixOpKind::UnaryAdd),
+            Token::AddAdd => parse_prefix_op!(2, PrefixOpKind::PreInc),
+            Token::Sub => parse_prefix_op!(2, PrefixOpKind::UnarySub),
+            Token::SubSub => parse_prefix_op!(2, PrefixOpKind::PreDec),
+            Token::Mul => parse_prefix_op!(2, PrefixOpKind::Deref),
+            Token::Tilde => parse_prefix_op!(2, PrefixOpKind::BitNot),
+            Token::Exc => parse_prefix_op!(2, PrefixOpKind::Not),
+            Token::And => parse_prefix_op!(2, PrefixOpKind::Ref),
+            Token::AndAnd => {
+                self.tokens.next();
+                // `&&` can be used to take reference twice.
+                // The outer `&` would be invalid (since the value produced by `&expr` is an rvalue),
+                // but error would be reported later down the line.
+                let inner_operand = self.parse_expr(span, 2)?;
+                let inner_span = inner_operand.span();
+                let outer_operand = Expr::PrefixOp(PrefixOpKind::Ref, Box::new(inner_operand))
+                    .to_spanned((span.file, span.start + 1, inner_span.end));
+                Some(
+                    Expr::PrefixOp(PrefixOpKind::Ref, Box::new(outer_operand)).to_spanned((
+                        span.file,
+                        span.start,
+                        inner_span.end,
+                    )),
+                )
+            }
             &Token::Ident(s) => {
                 self.tokens.next();
                 if self.is_typename(s) {
@@ -900,8 +944,35 @@ impl Parser {
                 self.tokens.next();
                 Some(Expr::Continue.to_spanned(span))
             }
-            Token::Do => todo!("do-while loops"),
-            Token::For => todo!("for loops"),
+            Token::While => {
+                self.tokens.next();
+                let start_span = span;
+                let span = expect_token!(self, Token::ParenOpen, span,
+                    else => return Some(Expr::Error.to_spanned(span)));
+                let cond = self.parse_expr(span, 16)?;
+                let span = expect_token!(self, Token::ParenClose, cond.span(),
+                    else => return Some(Expr::Error.to_spanned(span)));
+                let body = self.parse_expr_or_block(span)?;
+                let span = start_span.join(body.span());
+                Some(Expr::While(Box::new(cond), body).to_spanned(span))
+            }
+            Token::Do => {
+                self.tokens.next();
+                let start_span = span;
+                let body = self.parse_expr_or_block(span)?;
+                let span = body.span();
+                let span = expect_token!(self, Token::While, span,
+                    else => return Some(Expr::Error.to_spanned(span)));
+                let span = expect_token!(self, Token::ParenOpen, span,
+                    else => return Some(Expr::Error.to_spanned(span)));
+                let cond = self.parse_expr(span, 16)?;
+                let span = expect_token!(self, Token::ParenClose, cond.span(),
+                    else => return Some(Expr::Error.to_spanned(span)));
+                Some(Expr::DoWhile(body, Box::new(cond)).to_spanned(start_span.join(span)))
+            }
+            Token::For => todo!("for"),
+            Token::If => todo!("if"),
+            Token::Switch => todo!("switch"),
             Token::Goto => {
                 self.tokens.next();
                 if let Some((ident, ident_span)) = self.expect_ident(span).map(Spanned::into_pair) {
@@ -910,7 +981,6 @@ impl Parser {
                     return Some(Expr::Error.to_spanned(span));
                 }
             }
-            Token::If => todo!("if"),
             Token::Return => {
                 self.tokens.next();
                 match self.tokens.peek() {
@@ -929,33 +999,6 @@ impl Parser {
                 }
             }
             Token::Sizeof => todo!("sizeof"),
-            Token::Switch => todo!("switch"),
-            Token::While => todo!("while"),
-            Token::Add => parse_prefix_op!(2, PrefixOpKind::UnaryAdd),
-            Token::AddAdd => parse_prefix_op!(2, PrefixOpKind::PreInc),
-            Token::Sub => parse_prefix_op!(2, PrefixOpKind::UnarySub),
-            Token::SubSub => parse_prefix_op!(2, PrefixOpKind::PreDec),
-            Token::Mul => parse_prefix_op!(2, PrefixOpKind::Deref),
-            Token::Tilde => parse_prefix_op!(2, PrefixOpKind::BitNot),
-            Token::Exc => parse_prefix_op!(2, PrefixOpKind::Not),
-            Token::And => parse_prefix_op!(2, PrefixOpKind::Ref),
-            Token::AndAnd => {
-                self.tokens.next();
-                // `&&` can be used to take reference twice.
-                // The outer `&` would be invalid (since the value produced by `&expr` is an rvalue),
-                // but error would be reported later down the line.
-                let inner_operand = self.parse_expr(span, 2)?;
-                let inner_span = inner_operand.span();
-                let outer_operand = Expr::PrefixOp(PrefixOpKind::Ref, Box::new(inner_operand))
-                    .to_spanned((span.file, span.start + 1, inner_span.end));
-                Some(
-                    Expr::PrefixOp(PrefixOpKind::Ref, Box::new(outer_operand)).to_spanned((
-                        span.file,
-                        span.start,
-                        inner_span.end,
-                    )),
-                )
-            }
             Token::ParenOpen => {
                 self.tokens.next();
                 self.parse_paren(span)
@@ -963,32 +1006,12 @@ impl Parser {
             Token::Case => {
                 self.tokens.next();
                 let expr = self.parse_expr(span, 16)?;
-                let end_span = match self.expect_peek_token(expr.span())?.as_pair() {
-                    (Token::Colon, span) => {
-                        self.tokens.next();
-                        span
-                    }
-                    (_, span) => {
-                        self.err_reporter
-                            .report(&Error::ExpectToken(Token::Colon).to_spanned(span));
-                        expr.span()
-                    }
-                };
+                let end_span = expect_token!(self, Token::Colon, expr.span());
                 Some(Expr::Case(Box::new(expr)).to_spanned(span.join(end_span)))
             }
             Token::Default => {
                 self.tokens.next();
-                let end_span = match self.expect_peek_token(span)?.as_pair() {
-                    (Token::Colon, span) => {
-                        self.tokens.next();
-                        span
-                    }
-                    (_, span) => {
-                        self.err_reporter
-                            .report(&Error::ExpectToken(Token::Colon).to_spanned(span));
-                        span
-                    }
-                };
+                let end_span = expect_token!(self, Token::Colon, span);
                 Some(Expr::Default.to_spanned(span.join(end_span)))
             }
             Token::BraceOpen => todo!("list/struct literal"),
@@ -1036,7 +1059,7 @@ impl Parser {
         };
         let mut expr = expr?;
         while let Some((token, span)) = self.tokens.peek().map(Spanned::as_pair) {
-            macro infix_op($exprkind:tt, $kind:expr, $prec:expr) {{
+            macro infix_op($exprkind:tt, $kind:expr, $prec:expr $(,)?) {{
                 if prec <= $prec {
                     break;
                 }
@@ -1047,7 +1070,7 @@ impl Parser {
                 let span = expr.span().join(rhs.span());
                 expr = Expr::$exprkind(Box::new(expr), $kind, Box::new(rhs)).to_spanned(span);
             }}
-            macro postfix_op($kind:expr) {{
+            macro postfix_op($kind:expr $(,)?) {{
                 // The only two cases are postfix++ and postfix--, both having precedence of 1,
                 // so no need for precedence checking.
                 self.tokens.next();
@@ -1063,17 +1086,7 @@ impl Parser {
                 Token::BracketOpen => {
                     self.tokens.next();
                     let operand = self.parse_expr(span, 16)?;
-                    let end_span = match self.expect_peek_token(operand.span())?.as_pair() {
-                        (Token::BracketClose, span) => {
-                            self.tokens.next();
-                            span
-                        }
-                        (_, span) => {
-                            self.err_reporter
-                                .report(&Error::ExpectToken(Token::BracketClose).to_spanned(span));
-                            operand.span()
-                        }
-                    };
+                    let end_span = expect_token!(self, Token::BracketClose, operand.span());
                     let span = expr.span().join(end_span);
                     expr = Expr::Subscript(Box::new(expr), Box::new(operand)).to_spanned(span);
                 }

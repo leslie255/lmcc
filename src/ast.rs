@@ -30,7 +30,7 @@ pub enum Expr {
     Labal(IdentStr),
     Goto(IdentStr),
     Typecast(Ty, Box<Spanned<Expr>>),
-    Call(Box<Spanned<Expr>>, Spanned<Vec<Spanned<Expr>>>),
+    Call(Box<Spanned<Expr>>, Spanned<ExprBlock>),
     Subscript(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Break,
     Continue,
@@ -39,11 +39,17 @@ pub enum Expr {
     /// Representation for member access expressions.
     /// `expr.field0->field1`.
     FieldPath(Box<Spanned<Expr>>, Vec<FieldPathItem>),
+    While(Box<Spanned<Expr>>, ExprOrBlock),
+    DoWhile(ExprOrBlock, Box<Spanned<Expr>>),
 }
+
+pub type ExprBlock = Vec<Spanned<Expr>>;
+
 impl Expr {
     pub fn omits_semicolon(&self) -> bool {
         match self {
             Expr::Decl(DeclItem::Func(_, _, _, body)) => body.is_some(),
+            Expr::While(_, body) => body.is_block(),
             Expr::Error | Expr::Labal(..) | Expr::Case(..) | Expr::Default => true,
             _ => false,
         }
@@ -285,6 +291,50 @@ pub enum FieldPathItem {
     /// Indirect member accessing (`->`).
     /// Includes span for the `->` token.
     Ind(Span, Spanned<IdentStr>),
+}
+
+#[derive(Clone, PartialEq)]
+pub enum ExprOrBlock {
+    Expr(Box<Spanned<Expr>>),
+    Block(Spanned<ExprBlock>),
+}
+impl From<Box<Spanned<Expr>>> for ExprOrBlock {
+    fn from(value: Box<Spanned<Expr>>) -> Self {
+        Self::Expr(value)
+    }
+}
+impl From<Spanned<Expr>> for ExprOrBlock {
+    fn from(value: Spanned<Expr>) -> Self {
+        Box::new(value).into()
+    }
+}
+impl From<Spanned<ExprBlock>> for ExprOrBlock {
+    fn from(value: Spanned<ExprBlock>) -> Self {
+        Self::Block(value)
+    }
+}
+impl ExprOrBlock {
+    pub const fn span(&self) -> Span {
+        match self {
+            Self::Expr(expr) => expr.span(),
+            Self::Block(block) => block.span(),
+        }
+    }
+    pub const fn is_block(&self) -> bool {
+        matches!(self, Self::Block(..))
+    }
+    pub const fn is_expr(&self) -> bool {
+        matches!(self, Self::Expr(..))
+    }
+}
+
+impl Debug for ExprOrBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Expr(expr) => Debug::fmt(expr, f),
+            Self::Block(block) => Debug::fmt(block, f),
+        }
+    }
 }
 
 impl Debug for Signature {

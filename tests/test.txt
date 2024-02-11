@@ -3,11 +3,22 @@ typedef int T;
 (T) (1*(2+3));
 
 f();
-f(x);
-f(x, y);
+g(x);
+h(x, y);
 
 case 0:
 
 default:
 
 a[i].x->y;
+
+while (true) f();
+while (true) {}
+while (true) {
+    f();
+}
+do f() while (true);
+do {} while (true);
+do {
+    f();
+} while (true);

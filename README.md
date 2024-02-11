@@ -17,3 +17,7 @@ Parser TODO:
 - List decl.
 - Flexible `;` rules.
 - Better error recovery.
+- List/struct literals.
+- Compound literals.
+- Tenary operator.
+- `sizeof` operator.

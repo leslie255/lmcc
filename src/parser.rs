@@ -1093,7 +1093,9 @@ impl Parser {
                 Token::Dot => {
                     expr = self.parse_field_path(expr)?;
                 }
-                Token::Arrow => todo!("indirect member access"),
+                Token::Arrow => {
+                    expr = self.parse_field_path(expr)?;
+                },
                 Token::AddAdd => postfix_op!(PostfixOpKind::PostInc),
                 Token::SubSub => postfix_op!(PostfixOpKind::PostDec),
                 Token::Mul => infix_op!(InfixOp, InfixOpKind::Mul, 3),

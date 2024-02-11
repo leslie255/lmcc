@@ -9,6 +9,7 @@ Very WIP.
 ## Progress
 
 Parser TODO:
+- Preprocessor/macros
 - `if` statements.
 - `switch` statements.
 - `for` statements.

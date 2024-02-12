@@ -55,7 +55,8 @@ pub enum Error<'a> {
     NonDeclInStructUnion,
     StorageClassInStructUnion,
     RhsInStructUnion,
-    AnonStruct,
+    AnonStructUnion,
+    AnonEnum,
 }
 
 impl Error<'_> {

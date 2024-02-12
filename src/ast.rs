@@ -77,7 +77,7 @@ impl Expr {
 
 /// Unrelated to the term "kind" in FP languages.
 /// A type is made of a `TyKind` wrapped with `const`ness and `volatile`ness.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub enum TyKind {
     Int(Signness, IntSize),
     Float(FloatSize),
@@ -86,12 +86,13 @@ pub enum TyKind {
     FixedArr(Box<Ty>, u64),
     Struct(Option<IdentStr>, Option<StructFields>),
     Union(Option<IdentStr>, Option<StructFields>),
-    Enum(IdentStr),
+    Enum(Option<IdentStr>, Option<EnumFields>),
     Typename(IdentStr),
     Void,
     Error,
 }
 pub type StructFields = Vec<(Ty, IdentStr)>;
+pub type EnumFields = Vec<(IdentStr, Option<ChildExpr>)>;
 impl TyKind {
     pub fn to_ty(self, is_const: bool, is_volatile: bool) -> Ty {
         Ty {
@@ -101,7 +102,7 @@ impl TyKind {
         }
     }
 }
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct Ty {
     pub is_const: bool,
     pub is_volatile: bool,
@@ -485,7 +486,30 @@ impl Debug for Ty {
                 write!(f, "{}{}union", const_!(), volatile!())?;
                 write_struct_union_fields!(fields)
             }
-            TyKind::Enum(name) => write!(f, "{}{}enum {name:?}", const_!(), volatile!()),
+            TyKind::Enum(name, fields) => {
+                write!(f, "{}{}enum", const_!(), volatile!())?;
+                if let Some(name) = name {
+                    write!(f, " {:?}", name)?;
+                }
+                match fields {
+                    Some(fields) => {
+                        write!(f, " {{")?;
+                        let f = fields.iter().try_do_in_between(
+                            f,
+                            |f| {
+                                if f.alternate() {
+                                    write!(f, ", ")
+                                } else {
+                                    write!(f, ",")
+                                }
+                            },
+                            |f, (ty, name)| write!(f, "{ty:?} {name:?}"),
+                        )?;
+                        write!(f, "}}")
+                    }
+                    None => Ok(()),
+                }
+            }
             TyKind::Typename(name) => write!(f, "{}{}typename {name:?}", const_!(), volatile!()),
             TyKind::Void => write!(f, "{}{}void", const_!(), volatile!()),
             TyKind::Error => write!(f, "{}{}ERROR", const_!(), volatile!()),

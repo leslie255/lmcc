@@ -3,6 +3,7 @@ use std::{collections::HashMap, fmt::Debug, iter::Peekable, rc::Rc, vec};
 use crate::{
     ast::*,
     error::{Error, ErrorReporter, Span, Spanned, ToSpanned},
+    intern_string,
     token::NumValue,
     utils::{fixme, match_into, match_into_unchecked, IdentStr},
 };
@@ -43,6 +44,7 @@ struct DeclSpecifiers {
     bool: Option<Span>,
     struct_: Option<Spanned<(Option<IdentStr>, Option<StructFields>)>>,
     union_: Option<Spanned<(Option<IdentStr>, Option<StructFields>)>>,
+    enum_: Option<Spanned<(Option<IdentStr>, Option<EnumFields>)>>,
 
     // --- type name ---
     typename: Option<Spanned<IdentStr>>,
@@ -165,8 +167,15 @@ impl DeclSpecifiers {
             ),
         }
     }
-    fn _add_enum(&mut self) {
-        todo!()
+    fn add_enum(&mut self, enum_: Spanned<(Option<IdentStr>, Option<EnumFields>)>) {
+        match &self.enum_ {
+            None => self.enum_ = Some(enum_),
+            Some(enum_) => panic!(
+                "calling `add_enum` multiple times on one `DeclSpecifier` (existing: {:?} @ {:?})",
+                enum_,
+                enum_.span()
+            ),
+        }
     }
     /// For invalid combinations of specifiers, report the error and return a guess of what the user meant.
     fn try_into_var_speci(&self, err_reporter: &ErrorReporter) -> VarSpecifier {
@@ -352,7 +361,7 @@ impl Parser {
                 }
                 _ => {
                     self.err_reporter
-                        .report(&Error::AnonStruct.to_spanned($start_span));
+                        .report(&Error::AnonStructUnion.to_spanned($start_span));
                     (None, None, $start_span)
                 }
             }
@@ -383,7 +392,43 @@ impl Parser {
                         let (name, fields, span) = parse_struct_union!(span);
                         decl_speci.add_union((name, fields).to_spanned(span));
                     }
-                    (Token::Enum, _) => todo!(),
+                    (Token::Enum, span) => {
+                        self.tokens.next();
+                        let (name, fields, span) = {
+                            let token = self.expect_peek_token(span)?;
+                            end_span = token.span();
+                            match token.inner() {
+                                &Token::Ident(name) => {
+                                    self.tokens.next();
+                                    let fields: Option<EnumFields> =
+                                        match self.tokens.peek().map(Spanned::as_pair) {
+                                            Some((Token::BraceOpen, span)) => {
+                                                self.tokens.next();
+                                                let (fields, span) =
+                                                    self.parse_enum_fields(span)?;
+                                                end_span = span;
+                                                Some(fields)
+                                            }
+                                            _ => None,
+                                        };
+                                    let span = span.join(end_span);
+                                    (Some(name), fields, span)
+                                }
+                                Token::BraceOpen => {
+                                    self.tokens.next();
+                                    let (fields, span) = self.parse_enum_fields(span)?;
+                                    end_span = span;
+                                    let span = span.join(end_span);
+                                    (None, Some(fields), span)
+                                }
+                                _ => {
+                                    self.err_reporter.report(&Error::AnonEnum.to_spanned(span));
+                                    (None, None, span)
+                                }
+                            }
+                        };
+                        decl_speci.add_enum((name, fields).to_spanned(span));
+                    }
                     _ => break,
                 }
             }
@@ -503,6 +548,9 @@ impl Parser {
         } else if let Some(union_) = &decl_speci.union_ {
             ensure_no!(signness);
             TyKind::Union(union_.0, union_.1.clone())
+        } else if let Some(enum_) = &decl_speci.enum_ {
+            ensure_no!(signness);
+            TyKind::Enum(enum_.0, enum_.1.clone())
         } else if let Some(signness) = decl_speci.signness {
             ensure_no!(struct_, ConflictingTypeSpecifier);
             ensure_no!(union_, ConflictingTypeSpecifier);
@@ -847,6 +895,55 @@ impl Parser {
                         }
                     }
                     end_span = self.consume_semicolons(end_span, omits_semicolon);
+                }
+            }
+        }
+        Some((fields, end_span))
+    }
+
+    /// Returns the fields and the end span.
+    fn parse_enum_fields(&mut self, prev_span: Span) -> Option<(EnumFields, Span)> {
+        let mut end_span = prev_span;
+        let mut fields: EnumFields = Vec::new();
+        loop {
+            let (token, span) = self.expect_peek_token(end_span)?.as_pair();
+            end_span = span;
+            match token {
+                Token::BraceClose => {
+                    self.tokens.next();
+                    break;
+                }
+                &Token::Ident(ident) => {
+                    self.tokens.next();
+                    let value = match self.tokens.peek().map(Spanned::as_pair) {
+                        Some((Token::Eq, span)) => {
+                            self.tokens.next();
+                            Some(Box::new(self.parse_expr(span, 15)?))
+                        }
+                        _ => None,
+                    };
+                    fields.push((ident, value));
+                    match self.expect_peek_token(end_span)?.as_pair() {
+                        (Token::Comma, span) => {
+                            self.tokens.next();
+                            end_span = span;
+                        }
+                        (Token::BraceClose,span) => {
+                            self.tokens.next();
+                            end_span = span;
+                            break;
+                        }
+                        (_, span) => self
+                            .err_reporter
+                            .report(&Error::ExpectTokens(&[Token::Comma, Token::BraceClose]).to_spanned(span)),
+                    }
+                }
+                _ => {
+                    self.err_reporter.report(
+                        &Error::ExpectTokens(&[Token::Ident(intern_string("")), Token::BraceClose])
+                            .to_spanned(span),
+                    );
+                    break;
                 }
             }
         }

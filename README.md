@@ -11,6 +11,7 @@ Very WIP.
 Parser TODO:
 - Preprocessor/macros.
 - `enum`.
+- Indexed list literal.
 - List decl.
 - Function pointer types.
 - `sizeof` operator.

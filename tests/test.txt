@@ -37,3 +37,5 @@ struct T x;
 struct T {int x; int y};
 
 union T {int x; int y;} x;
+
+struct T x = { .x = 10, 20 };

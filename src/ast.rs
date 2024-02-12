@@ -53,6 +53,7 @@ pub enum Expr {
         ExprOrBlock,
     ),
     If(Vec<(ChildExpr, ExprOrBlock)>, Option<ExprOrBlock>),
+    List(Vec<ListItem>),
 }
 
 impl Expr {
@@ -277,6 +278,13 @@ impl AssignOpKind {
             AssignOpKind::Bsr => InfixOpKind::Bsr,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ListItem {
+    Expr(ChildExpr),
+    /// `.field = expr`
+    Field(Spanned<IdentStr>,ChildExpr),
 }
 
 #[derive(Clone, PartialEq)]

@@ -1244,7 +1244,52 @@ impl Parser {
                 let end_span = expect_token!(self, Token::Colon, span);
                 Some(Expr::Default.to_spanned(span.join(end_span)))
             }
-            Token::BraceOpen => todo!("list/struct literal"),
+            Token::BraceOpen => {
+                self.tokens.next();
+                let mut items = Vec::<ListItem>::new();
+                let start_span = span;
+                let mut end_span = span;
+                loop {
+                    let (token, span) = self.expect_peek_token(end_span)?.as_pair();
+                    end_span = span;
+                    match token {
+                        Token::BraceClose => {
+                            self.tokens.next();
+                            break;
+                        }
+                        Token::Dot => {
+                            self.tokens.next();
+                            let ident = self.expect_ident(end_span)?;
+                            end_span = expect_token!(self, Token::Eq, ident.span());
+                            let expr = self.parse_expr(end_span, 15)?;
+                            items.push(ListItem::Field(ident, Box::new(expr)))
+                        }
+                        _ => {
+                            let expr = self.parse_expr(end_span, 15)?;
+                            items.push(ListItem::Expr(Box::new(expr)));
+                        }
+                    }
+                    match self.expect_peek_token(end_span)?.as_pair() {
+                        (Token::Comma, span) => {
+                            end_span = span;
+                            self.tokens.next();
+                        }
+                        (Token::BraceClose, span) => {
+                            end_span = span;
+                            self.tokens.next();
+                            break;
+                        }
+                        (_, span) => {
+                            self.err_reporter.report(
+                                &Error::ExpectTokens(&[Token::Comma, Token::BraceClose])
+                                    .to_spanned(span),
+                            );
+                            return None;
+                        }
+                    }
+                }
+                Some(Expr::List(items).to_spanned(start_span.join(end_span)))
+            }
             Token::Else
             | Token::AddEq
             | Token::SubEq

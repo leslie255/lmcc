@@ -13,7 +13,6 @@ Parser TODO:
 - `enum`.
 - List decl.
 - Function pointer types.
-- List/struct literals.
 - Compound literals.
 - Tenary operator.
 - `sizeof` operator.

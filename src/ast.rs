@@ -54,6 +54,7 @@ pub enum Expr {
     ),
     If(Vec<(ChildExpr, ExprOrBlock)>, Option<ExprOrBlock>),
     List(Vec<ListItem>),
+    Tenary(ChildExpr, ChildExpr, ChildExpr),
 }
 
 impl Expr {
@@ -284,7 +285,7 @@ impl AssignOpKind {
 pub enum ListItem {
     Expr(ChildExpr),
     /// `.field = expr`
-    Field(Spanned<IdentStr>,ChildExpr),
+    Field(Spanned<IdentStr>, ChildExpr),
 }
 
 #[derive(Clone, PartialEq)]

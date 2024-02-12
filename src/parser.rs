@@ -1353,6 +1353,16 @@ impl Parser {
                 expr = Expr::PostfixOp(Box::new(expr), $kind).to_spanned(span);
             }}
             match token {
+                Token::Ques => {
+                    self.tokens.next();
+                    let start_span = expr.span();
+                    let middle = self.parse_expr(span, 16)?;
+                    let span = expect_token!(self, Token::Colon, middle.span());
+                    let right = self.parse_expr(span, 13)?;
+                    let span = start_span.join(right.span());
+                    expr = Expr::Tenary(Box::new(expr), Box::new(middle), Box::new(right))
+                        .to_spanned(span);
+                }
                 // Precedence 1. No need for precedence checking here.
                 Token::ParenOpen => {
                     self.tokens.next();
@@ -1391,7 +1401,6 @@ impl Parser {
                 Token::Or => infix_op!(InfixOp, InfixOpKind::BitOr, 10),
                 Token::AndAnd => infix_op!(InfixOp, InfixOpKind::And, 11),
                 Token::OrOr => infix_op!(InfixOp, InfixOpKind::Or, 12),
-                Token::Ques => todo!("tenary operator ?:"),
                 // Assignments technically have right-to-left associativity, but most compilers don't care,
                 // as only expressions with very high (aka. small) precedence can legally be the LHS of assignments.
                 Token::Eq => infix_op!(InfixOp, InfixOpKind::Eq, 14),

@@ -39,3 +39,5 @@ struct T {int x; int y};
 union T {int x; int y;} x;
 
 struct T x = { .x = 10, 20 };
+
+true ? 10, 10 : 20, 10;

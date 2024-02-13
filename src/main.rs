@@ -1,4 +1,4 @@
-#![feature(decl_macro, result_option_inspect)]
+#![feature(decl_macro)]
 
 use std::{mem::MaybeUninit, sync::Mutex};
 

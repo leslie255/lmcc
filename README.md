@@ -10,7 +10,6 @@ Very WIP.
 
 Parser TODO:
 - Preprocessor/macros.
-- Indexed list literal.
 - List decl.
 - Function pointer types.
 - `sizeof` operator.

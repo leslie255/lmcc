@@ -287,6 +287,8 @@ pub enum ListItem {
     Expr(ChildExpr),
     /// `.field = expr`
     Field(Spanned<IdentStr>, ChildExpr),
+    /// `[i] = expr`
+    Index(ChildExpr, ChildExpr),
 }
 
 #[derive(Clone, PartialEq)]

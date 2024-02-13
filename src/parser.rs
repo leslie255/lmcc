@@ -1,11 +1,7 @@
 use std::{collections::HashMap, fmt::Debug, iter::Peekable, rc::Rc, vec};
 
 use crate::{
-    ast::*,
-    error::{Error, ErrorReporter, Span, Spanned, ToSpanned},
-    intern_string,
-    token::NumValue,
-    utils::{fixme, match_into, match_into_unchecked, IdentStr},
+    ast::*, error::{Error, ErrorReporter, Span, Spanned, ToSpanned}, intern_string, token::NumValue, utils::{fixme, match_into, match_into_unchecked, IdentStr}
 };
 
 use super::token::{Token, TokenStream};
@@ -1360,6 +1356,14 @@ impl Parser {
                             end_span = expect_token!(self, Token::Eq, ident.span());
                             let expr = self.parse_expr(end_span, 15)?;
                             items.push(ListItem::Field(ident, Box::new(expr)))
+                        }
+                        Token::BracketOpen => {
+                            self.tokens.next();
+                            let operand = self.parse_expr(end_span, 16)?;
+                            end_span = expect_token!(self, Token::BracketClose, operand.span());
+                            end_span = expect_token!(self, Token::Eq, end_span);
+                            let expr = self.parse_expr(end_span, 15)?;
+                            items.push(ListItem::Index(Box::new(operand), Box::new(expr)))
                         }
                         _ => {
                             let expr = self.parse_expr(end_span, 15)?;

@@ -119,8 +119,17 @@ where
         Display::fmt(self.inner(), f)
     }
 }
+impl<T> Spanned<Box<T>> {
+    pub fn into_unboxed(self) -> Spanned<T> {
+        self.map(|x| *x)
+    }
+}
 
 impl<T> Spanned<T> {
+    pub fn into_boxed(self) -> Spanned<Box<T>> {
+        self.map(Box::new)
+    }
+
     pub const fn span(&self) -> Span {
         self.span
     }

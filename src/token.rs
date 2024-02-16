@@ -598,7 +598,7 @@ impl TokenStream {
         Ok(Token::StrLiteral(bytes.into()).to_spanned((self.path, start_idx, end_idx)))
     }
 
-    fn parse_macro(&mut self, start_idx: SourceIdx) -> Result<(), Spanned<Error<'static>>> {
+    fn pp(&mut self, start_idx: SourceIdx) -> Result<(), Spanned<Error<'static>>> {
         let keyword_start = self
             .chars
             .peek()
@@ -636,18 +636,16 @@ impl TokenStream {
                 }
                 while let Some((_, ch)) = self.chars.peek() {
                     match ch {
+                        c if c.is_whitespace() => {
+                            self.chars.next();
+                            continue;
+                        }
                         '\n' => {
                             self.chars.next();
                             self.macros.insert(name, None);
                             break;
                         }
-                        '\\' => {
-                            todo!()
-                        }
-                        ch if ch.is_whitespace() => {
-                            self.chars.next();
-                            continue;
-                        }
+                        '\\' => todo!(),
                         _ => todo!(),
                     }
                 }
@@ -656,7 +654,7 @@ impl TokenStream {
             "undef" => todo!(),
             "line" => todo!("#line macro"),
             "error" => todo!(),
-            "prgama" => todo!("#pragma"),
+            "pragma" => todo!("#pragma"),
             _ => Err(Error::InvalidPpKeyword.to_spanned((self.path, keyword_start, keyword_end))),
         }
     }
@@ -680,9 +678,7 @@ impl Iterator for TokenStream {
                 (_, c) if c.is_whitespace() => continue,
 
                 (i, '#') => {
-                    let _ = self
-                        .parse_macro(i)
-                        .inspect_err(|err| self.err_reporter.report(err));
+                    let _ = self.pp(i).inspect_err(|err| self.err_reporter.report(err));
                     continue;
                 }
 

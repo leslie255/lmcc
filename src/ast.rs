@@ -10,7 +10,7 @@ use crate::{
     utils::{DoInBetween, IdentStr},
 };
 
-type ChildExpr = Box<Spanned<Expr>>;
+type ChildExpr = Spanned<Box<Expr>>;
 pub type ExprBlock = Vec<Spanned<Expr>>;
 
 #[derive(Debug, Clone, PartialEq)]

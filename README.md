@@ -13,5 +13,6 @@ Parser TODO:
 - List decl.
 - Function pointer types.
 - `sizeof` operator.
+- Bitfield struct decl.
 
 - Better error recovery.

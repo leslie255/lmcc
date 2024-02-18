@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::{
     file_reader::FileReader, source_string::SourceIdx, token::Token,
-    utils::derive_display_from_debug, utils::fixme,
+    utils::{derive_display_from_debug, fixme, IdentStr},
 };
 
 pub type CowStr = Cow<'static, str>;
@@ -57,6 +57,10 @@ pub enum Error<'a> {
     RhsInStructUnion,
     AnonStructUnion,
     AnonEnum,
+    ExprNoAssignable,
+    VarDoesNotExist(IdentStr),
+    OutOfRangeNumber(i128),
+    ExprNotAllowed,
 }
 
 impl Error<'_> {

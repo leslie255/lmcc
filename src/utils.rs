@@ -176,9 +176,10 @@ pub fn ptr_addr<T>(ptr: *const T) -> usize {
     unsafe { mem::transmute(ptr) }
 }
 
-#[derive(Clone, Copy)]
-pub struct IndexVecKVPairs<'a, I: Debug + index_vec::Idx, T: Debug>(&'a IndexVec<I, T>);
-impl<'a, I: Debug + index_vec::Idx, T: Debug> Debug for IndexVecKVPairs<'a, I, T> {
+#[repr(transparent)]
+#[derive(Clone)]
+pub struct IndexVecKVPairs<I: Debug + index_vec::Idx, T: Debug>(IndexVec<I, T>);
+impl<I: Debug + index_vec::Idx, T: Debug> Debug for IndexVecKVPairs<I, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_map().entries(self.0.iter_enumerated()).finish()
     }
@@ -186,8 +187,8 @@ impl<'a, I: Debug + index_vec::Idx, T: Debug> Debug for IndexVecKVPairs<'a, I, T
 
 pub fn index_vec_kv_pairs<I: Debug + index_vec::Idx, T: Debug>(
     index_vec: &IndexVec<I, T>,
-) -> IndexVecKVPairs<I, T> {
-    IndexVecKVPairs(index_vec)
+) -> &IndexVecKVPairs<I, T> {
+    unsafe { std::mem::transmute(index_vec) }
 }
 
 #[derive(Clone, Copy)]

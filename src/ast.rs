@@ -26,7 +26,6 @@ pub enum Expr {
     /// Not including or memeber accessing because the LHS/RHS for those aren't really expressions.
     InfixOp(ChildExpr, InfixOpKind, ChildExpr),
     OpAssign(ChildExpr, AssignOpKind, ChildExpr),
-    Assign(ChildExpr, ChildExpr),
     Decl(DeclItem),
     DeclList(Vec<DeclItem>),
     EmptyDecl(Ty),
@@ -220,7 +219,6 @@ pub enum InfixOpKind {
     BitXor,
     And,
     Or,
-    Xor,
     Gt,
     Ge,
     Lt,

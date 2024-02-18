@@ -33,6 +33,7 @@ struct DeclSpecifiers {
     inline: Option<Span>,
 
     // --- type specifiers ---
+    void: Option<Span>,
     signness: Option<Spanned<Signness>>,
     char: Option<Span>,
     short: Option<Span>,
@@ -92,6 +93,7 @@ impl DeclSpecifiers {
             Token::Auto => set_flag!(auto),
             Token::Typedef => set_flag!(typedef),
             Token::Inline => set_flag!(inline),
+            Token::Void => set_flag!(void),
             Token::Char => set_flag!(char),
             Token::Short => set_flag!(short),
             Token::Int => set_flag!(int),
@@ -476,7 +478,20 @@ impl Parser {
             },
         }
         // TODO: more accurate span.
-        if decl_speci.char.is_some() {
+        if decl_speci.void.is_some() {
+            ensure_no!(char, ConflictingTypeSpecifier);
+            ensure_no!(short, ConflictingTypeSpecifier);
+            ensure_no!(int, ConflictingTypeSpecifier);
+            ensure_no!(short, ConflictingTypeSpecifier);
+            ensure_no!(long0, ConflictingTypeSpecifier);
+            ensure_no!(float, ConflictingTypeSpecifier);
+            ensure_no!(double, ConflictingTypeSpecifier);
+            ensure_no!(bool, ConflictingTypeSpecifier);
+            ensure_no!(struct_, ConflictingTypeSpecifier);
+            ensure_no!(union_, ConflictingTypeSpecifier);
+            ensure_no!(typename, ConflictingTypeSpecifier);
+            TyKind::Void
+        } else if decl_speci.char.is_some() {
             ensure_no!(short, ConflictingTypeSpecifier);
             ensure_no!(int, ConflictingTypeSpecifier);
             ensure_no!(short, ConflictingTypeSpecifier);

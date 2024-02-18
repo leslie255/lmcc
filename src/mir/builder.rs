@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, rc::Rc};
+use std::rc::Rc;
 
 use index_vec::{index_vec, IndexVec};
 
@@ -56,7 +56,7 @@ pub fn make_mir_for_item(
 }
 
 struct MirFuncBuilder<'g> {
-    global: &'g GlobalContext,
+    global: &'g mut GlobalContext,
     err_reporter: Rc<ErrorReporter>,
     mir_func: MirFunction,
     /// The "cursor" for writing new instructions onto.
@@ -79,10 +79,21 @@ impl<'g> MirFuncBuilder<'g> {
             .map(|&(ref ty, name)| VarInfo {
                 is_arg: true,
                 ty: ty.clone(),
-                name: name,
+                name,
             })
             .collect();
         let args: Vec<VarId> = vars.indices().collect();
+        for (id, info) in vars.iter_enumerated() {
+            if let Some(name) = info.name {
+                _ = global
+                    .names
+                    .add_var(*name, (id, info.ty.clone()))
+                    .inspect_err(|()| {
+                        err_reporter
+                            .report(&Error::RedefinitionOfVar(*name).to_spanned(name.span()))
+                    });
+            }
+        }
         let mir_func = MirFunction {
             args,
             ret: sig.ret_ty.into_inner(),
@@ -109,15 +120,15 @@ impl<'g> MirFuncBuilder<'g> {
             current_block.insts.push(inst);
         }
     }
-    fn solve_typename(&self, ty: Ty) -> Cow<'g, Ty> {
+    fn solve_typename<'a: 'g, 'b: 'g>(&'a self, ty: &'b Ty) -> &'g Ty {
         if let &TyKind::Typename(typename) = &ty.kind {
             let mut ty = self.global.names.typename(typename).unwrap();
             while let &TyKind::Typename(typename) = &ty.kind {
                 ty = self.global.names.typename(typename).unwrap();
             }
-            Cow::Borrowed(ty)
+            ty
         } else {
-            Cow::Owned(ty)
+            ty
         }
     }
     fn build_num_literal(&self, num: NumValue, span: Span) -> Option<(NumLiteralContent, Ty)> {
@@ -155,10 +166,58 @@ impl<'g> MirFuncBuilder<'g> {
             )),
         }
     }
+    fn build_unary_add(&mut self, operand: Spanned<Expr>) -> Option<(Value, Ty)> {
+        let span = operand.span();
+        let (value, ty) = self.build_expr(operand)?;
+        match &self.solve_typename(&ty).kind {
+            TyKind::Int(_, _) | TyKind::Float(_) | TyKind::Bool => (),
+            TyKind::Typename(_) => unreachable!(),
+            _ => {
+                self.err_reporter
+                    .report(&Error::NonNumericInUnary.to_spanned(span));
+                return None;
+            }
+        }
+        Some((value, ty))
+    }
+    fn build_unary_sub(&mut self, operand: Spanned<Expr>) -> Option<(Value, Ty)> {
+        let (operand, span) = operand.into_pair();
+        match operand {
+            Expr::Error => panic_expr_error!(span),
+            Expr::NumLiteral(num) => {
+                let (num, mut ty) = self.build_num_literal(num, span)?;
+                let num = match num {
+                    NumLiteralContent::U(u) => {
+                        ty = match &ty.kind {
+                            &TyKind::Int(_, size) => TyKind::Int(Signness::Signed, size).to_ty(true, false),
+                            _ => unreachable!(),
+                        };
+                        NumLiteralContent::I(-i64::from_be_bytes(u.to_be_bytes()))
+                    }
+                    NumLiteralContent::I(i) => NumLiteralContent::I(-i),
+                    NumLiteralContent::F(f) => NumLiteralContent::F(-f),
+                };
+                Some((Value::Num(num), ty))
+            }
+            expr => {
+                let (_value, ty) = self.build_expr(expr.to_spanned(span))?;
+                match &self.solve_typename(&ty).kind {
+                    TyKind::Int(_, _) | TyKind::Float(_) | TyKind::Bool => (),
+                    TyKind::Typename(_) => unreachable!(),
+                    _ => {
+                        self.err_reporter
+                            .report(&Error::NonNumericInUnary.to_spanned(span));
+                        return None;
+                    }
+                }
+                todo!()
+            }
+        }
+    }
     fn build_expr(&mut self, expr: Spanned<Expr>) -> Option<(Value, Ty)> {
         let (expr, span) = expr.into_pair();
         match expr {
-            Expr::Error => panic_expr_error!(),
+            Expr::Error => panic_expr_error!(span),
             Expr::Ident(..) | Expr::PrefixOp(PrefixOpKind::Deref, _) => {
                 let (place, ty) = self.build_place(expr.to_spanned(span))?;
                 Some((Value::CopyPlace(place), ty))
@@ -172,6 +231,12 @@ impl<'g> MirFuncBuilder<'g> {
                 TyKind::Int(Signness::Signed, IntSize::_8).to_ty(true, false),
             )),
             Expr::StrLiteral(_) => todo!(),
+            Expr::PrefixOp(PrefixOpKind::UnarySub, expr) => {
+                self.build_unary_sub(expr.into_unboxed())
+            }
+            Expr::PrefixOp(PrefixOpKind::UnaryAdd, expr) => {
+                self.build_unary_add(expr.into_unboxed())
+            }
             Expr::PrefixOp(_, _) => todo!(),
             Expr::PostfixOp(_, _) => todo!(),
             Expr::InfixOp(_, _, _) => todo!(),
@@ -216,10 +281,10 @@ impl<'g> MirFuncBuilder<'g> {
             Expr::InfixOp(lhs, InfixOpKind::Eq, rhs) => {
                 let (place, lhs_ty) = self.build_place(lhs.into_unboxed())?;
                 let (value, rhs_ty) = self.build_expr(rhs.into_unboxed())?;
-                let lhs_ty = self.solve_typename(lhs_ty);
-                let rhs_ty = self.solve_typename(rhs_ty);
-                if lhs_ty != rhs_ty {
-                    todo!("Auto type casting & type checking");
+                let lhs_ty = self.solve_typename(&lhs_ty);
+                let rhs_ty = self.solve_typename(&rhs_ty);
+                if lhs_ty.kind != rhs_ty.kind {
+                    todo!("Auto type casting & type checking (lhs: {lhs_ty:?}, rhs: {rhs_ty:?})");
                 }
                 self.add_inst(MirInst::Assign(place, value));
             }
@@ -247,13 +312,13 @@ impl<'g> MirFuncBuilder<'g> {
             Expr::List(_) => todo!(),
             Expr::Tenary(_, _, _) => todo!(),
         }
-        todo!()
+        Some(())
     }
 
     pub fn build_place(&mut self, expr: Spanned<Expr>) -> Option<(Place, Ty)> {
         let (expr, span) = expr.into_pair();
         match expr {
-            Expr::Error => panic_expr_error!(),
+            Expr::Error => panic_expr_error!(span),
             Expr::Ident(name) => {
                 let Some(&(var_id, ref ty)) = self.global.names.var(name) else {
                     self.err_reporter
@@ -277,33 +342,5 @@ impl<'g> MirFuncBuilder<'g> {
                 None
             }
         }
-    }
-}
-
-/// Local context inside a function.
-struct LocalContext {
-    var_ids: Vec<HashMap<IdentStr, VarId>>,
-}
-impl LocalContext {
-    fn enters_block(&mut self) {
-        self.var_ids.push(HashMap::new());
-    }
-    fn leaves_block(&mut self) {
-        self.var_ids.pop().unwrap();
-    }
-    /// Returns `Err` if variable of the same name already exist.
-    fn add_variable(&mut self, name: IdentStr, id: VarId) -> Result<(), ()> {
-        let prev = self.var_ids.last_mut().unwrap().insert(name, id);
-        if prev.is_some() {
-            Err(())
-        } else {
-            Ok(())
-        }
-    }
-    fn var_id(&self, name: IdentStr) -> Option<VarId> {
-        self.var_ids
-            .iter()
-            .rev()
-            .find_map(|vars| vars.get(&name).copied())
     }
 }

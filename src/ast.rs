@@ -292,7 +292,7 @@ pub enum ListItem {
 #[derive(Clone, PartialEq)]
 pub struct Signature {
     pub ret_ty: Spanned<Ty>,
-    pub args: Vec<(Ty, Option<IdentStr>)>,
+    pub args: Vec<(Ty, Option<Spanned<IdentStr>>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

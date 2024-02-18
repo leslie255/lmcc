@@ -61,6 +61,8 @@ pub enum Error<'a> {
     VarDoesNotExist(IdentStr),
     OutOfRangeNumber(i128),
     ExprNotAllowed,
+    RedefinitionOfVar(IdentStr),
+    NonNumericInUnary,
 }
 
 impl Error<'_> {

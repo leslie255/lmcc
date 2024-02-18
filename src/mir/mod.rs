@@ -1,13 +1,14 @@
 #![allow(dead_code)]
 use std::{
     collections::HashMap,
-    fmt::{self, Debug, Display}
+    fmt::{self, Debug, Display},
 };
 
 use index_vec::IndexVec;
 
 use crate::{
     ast::{EnumFields, Signature, StructFields, Ty},
+    error::Spanned,
     utils::{index_vec_kv_pairs, DoInBetween, IdentStr},
 };
 
@@ -161,7 +162,7 @@ pub struct VarInfo {
     pub(self) is_arg: bool,
     pub(self) ty: Ty,
     /// If it's an actual variable declared by the user, tag it with a name for debug.
-    pub(self) name: Option<IdentStr>,
+    pub(self) name: Option<Spanned<IdentStr>>,
 }
 
 /// A place is an l-value, assignable and addressable.

@@ -698,8 +698,8 @@ impl Parser {
         ty
     }
 
-    fn parse_fn_decl_args(&mut self, prev_span: Span) -> Option<Vec<(Ty, Option<IdentStr>)>> {
-        let mut args = Vec::<(Ty, Option<IdentStr>)>::new();
+    fn parse_fn_decl_args(&mut self, prev_span: Span) -> Option<Vec<(Ty, Option<Spanned<IdentStr>>)>> {
+        let mut args = Vec::<(Ty, Option<Spanned<IdentStr>>)>::new();
         let token = self.expect_peek_token(prev_span)?;
         if token.inner() == &Token::ParenClose {
             self.tokens.next();
@@ -747,7 +747,7 @@ impl Parser {
                     }
                 };
                 prev_span = ident_span;
-                args.push((ty.into_inner(), Some(ident)));
+                args.push((ty.into_inner(), Some(ident.to_spanned(ident_span))));
                 let token = self.expect_peek_token(prev_span)?;
                 let span = token.span();
                 match token.inner() {

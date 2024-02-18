@@ -48,7 +48,9 @@ pub fn make_mir_for_item(
                     func_builder.build_stmt(stmt);
                 }
                 global.funcs.get_mut(&name).unwrap().mir_func = Some(func_builder.mir_func);
+                dbg!(&global.names);
                 global.names.leaves_block();
+                dbg!(&global.names);
             }
         }
         _ => todo!(),
@@ -100,7 +102,6 @@ impl<'g> MirFuncBuilder<'g> {
             vars,
             blocks: index_vec![MirBlock::default()],
         };
-        global.names.enters_block();
         Self {
             global,
             err_reporter,

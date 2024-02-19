@@ -16,38 +16,39 @@ mod builder;
 pub use builder::*;
 
 #[derive(Debug, Clone, Default)]
-pub struct GlobalContext {
+pub struct NamesContext {
     pub funcs: HashMap<IdentStr, FuncData>,
     /// TODO: Static variables.
     pub statics: (),
-    pub names: NameStack,
+    /// The first layer of locals are globals.
+    pub locals: Locals,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct Names {
-    pub vars: HashMap<IdentStr, (VarId, Ty)>,
+pub struct LocalsLayer {
+    pub vars: HashMap<IdentStr, VarId>,
     pub struct_names: HashMap<IdentStr, StructFields>,
     pub union_names: HashMap<IdentStr, StructFields>,
     pub enum_names: HashMap<IdentStr, EnumFields>,
 }
 
 #[derive(Debug, Clone)]
-pub struct NameStack(Vec<Names>);
-impl Default for NameStack {
+pub struct Locals(Vec<LocalsLayer>);
+impl Default for Locals {
     fn default() -> Self {
-        Self(vec![Names::default()])
+        Self(vec![LocalsLayer::default()])
     }
 }
-impl NameStack {
+impl Locals {
     pub fn enters_block(&mut self) {
-        self.0.push(Names::default());
+        self.0.push(LocalsLayer::default());
     }
     pub fn leaves_block(&mut self) {
         self.0.pop().unwrap();
     }
 }
 macro impl_name_type($add_name:ident, $name:ident, $map:ident, $V:ty) {
-    impl NameStack {
+    impl Locals {
         /// Returns `Err` for conflicting names.
         pub fn $add_name(&mut self, name: IdentStr, v: $V) -> Result<(), ()> {
             if self.0.last_mut().unwrap().$map.insert(name, v).is_some() {
@@ -61,7 +62,7 @@ macro impl_name_type($add_name:ident, $name:ident, $map:ident, $V:ty) {
         }
     }
 }
-impl_name_type!(add_var, var, vars, (VarId, Ty));
+impl_name_type!(add_var, var, vars, VarId);
 impl_name_type!(add_struct, struct_, struct_names, StructFields);
 impl_name_type!(add_union, union_, union_names, StructFields);
 impl_name_type!(add_enum, enum_, enum_names, EnumFields);
@@ -195,6 +196,7 @@ pub struct Place {
 }
 
 impl Place {
+    /// Create a place with no projections.
     pub const fn just_var(root: VarId) -> Self {
         Self {
             root,

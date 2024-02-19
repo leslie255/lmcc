@@ -5,10 +5,10 @@ use std::{mem::MaybeUninit, sync::Mutex};
 use ast::Expr;
 use error::{Error, ToSpanned};
 use intern_str::{InternStr, MaybeOwnedStr, StringArena};
-use mir::{make_mir_for_item, GlobalContext};
+use mir::make_mir_for_item;
 use parser::Parser;
 
-use crate::{error::ErrorReporter, file_reader::FileReader, token::TokenStream};
+use crate::{error::ErrorReporter, file_reader::FileReader, mir::NamesContext, token::TokenStream};
 
 mod ast;
 mod error;
@@ -53,7 +53,7 @@ fn main() {
 
     err_reporter.exit_if_has_error();
 
-    let mut global_cx = GlobalContext::default();
+    let mut global_cx = NamesContext::default();
     for expr in ast_parser {
         let (expr, span) = expr.into_pair();
         dbg!(&expr);

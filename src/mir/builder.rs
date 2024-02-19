@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    BlockId, FuncData, GlobalContext, MirBlock, MirFunction, MirInst, Place, Value, VarId, VarInfo,
+    BlockId, FuncData, MirBlock, MirFunction, MirInst, NamesContext, Place, Value, VarId, VarInfo,
 };
 
 /// `Expr::Error` should not occur in this stage of the compilation.
@@ -27,7 +27,7 @@ macro panic_expr_error {
     },
 }
 
-pub fn make_mir_for_item(cx: &mut GlobalContext, item: DeclItem, err_reporter: Rc<ErrorReporter>) {
+pub fn make_mir_for_item(cx: &mut NamesContext, item: DeclItem, err_reporter: Rc<ErrorReporter>) {
     match item {
         DeclItem::Func(_func_speci, ref sig, name, body) => {
             cx.funcs.insert(
@@ -38,15 +38,13 @@ pub fn make_mir_for_item(cx: &mut GlobalContext, item: DeclItem, err_reporter: R
                 },
             );
             if let Some(body) = body {
-                cx.names.enters_block();
+                cx.locals.enters_block();
                 let mut func_builder = MirFuncBuilder::new(cx, err_reporter, *name, sig.clone());
                 for stmt in body {
                     func_builder.build_stmt(stmt);
                 }
                 cx.funcs.get_mut(&name).unwrap().mir_func = Some(func_builder.mir_func);
-                dbg!(&cx.names);
-                cx.names.leaves_block();
-                dbg!(&cx.names);
+                cx.locals.leaves_block();
             }
         }
         _ => todo!(),
@@ -54,7 +52,7 @@ pub fn make_mir_for_item(cx: &mut GlobalContext, item: DeclItem, err_reporter: R
 }
 
 struct MirFuncBuilder<'cx> {
-    cx: &'cx mut GlobalContext,
+    cx: &'cx mut NamesContext,
     err_reporter: Rc<ErrorReporter>,
     mir_func: MirFunction,
     /// The "cursor" for writing new instructions onto.
@@ -66,7 +64,7 @@ impl<'cx> MirFuncBuilder<'cx> {
     /// Function itself must have already been added to global context.
     /// Requires calling `GlobalContext::{enters_block, leaves_block}` outside.
     pub fn new(
-        cx: &'cx mut GlobalContext,
+        cx: &'cx mut NamesContext,
         err_reporter: Rc<ErrorReporter>,
         func_name: IdentStr,
         sig: Signature,
@@ -99,8 +97,7 @@ impl<'cx> MirFuncBuilder<'cx> {
         for (id, info) in self_.mir_func.vars.iter_enumerated() {
             // Have to manually inline `add_var_to_cx` because partial borrow.
             if let Some(name) = info.name {
-                let ty = info.ty.clone();
-                _ = self_.cx.names.add_var(*name, (id, ty)).inspect_err(|()| {
+                _ = self_.cx.locals.add_var(*name, id).inspect_err(|()| {
                     self_
                         .err_reporter
                         .report(&Error::RedefinitionOfVar(*name).to_spanned(name.span()))
@@ -120,10 +117,10 @@ impl<'cx> MirFuncBuilder<'cx> {
             current_block.insts.push(inst);
         }
     }
-    fn add_var_to_cx(&mut self, name: Spanned<IdentStr>, id: VarId, ty: Ty) -> Option<()> {
+    fn add_var_to_cx(&mut self, name: Spanned<IdentStr>, id: VarId) -> Option<()> {
         self.cx
-            .names
-            .add_var(*name, (id, ty))
+            .locals
+            .add_var(*name, id)
             .inspect_err(|()| {
                 self.err_reporter
                     .report(&Error::RedefinitionOfVar(*name).to_spanned(name.span()))
@@ -140,13 +137,13 @@ impl<'cx> MirFuncBuilder<'cx> {
     ) -> Option<VarId> {
         let var_info = VarInfo {
             is_arg: false,
-            ty: ty.clone(),
+            ty,
             name,
             is_tmp,
         };
         let var_id = self.mir_func.vars.push(var_info);
         if let Some(name) = name {
-            self.add_var_to_cx(name, var_id, ty)?;
+            self.add_var_to_cx(name, var_id)?;
         }
         Some(var_id)
     }
@@ -378,17 +375,14 @@ impl<'cx> MirFuncBuilder<'cx> {
         match expr {
             Expr::Error => panic_expr_error!(span),
             Expr::Ident(name) => {
-                let Some(&(var_id, ref ty)) = self.cx.names.var(name) else {
+                let Some(&var_id) = self.cx.locals.var(name) else {
                     self.err_reporter
                         .report(&Error::VarDoesNotExist(name).to_spanned(span));
                     return None;
                 };
                 Some((
-                    Place {
-                        root: var_id,
-                        projections: Vec::new(),
-                    },
-                    ty.clone(),
+                    Place::just_var(var_id),
+                    self.mir_func.vars[var_id].ty.clone(),
                 ))
             }
             Expr::PrefixOp(PrefixOpKind::Deref, _) => todo!(),

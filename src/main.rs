@@ -67,7 +67,6 @@ fn main() {
             }
             Expr::EmptyDecl(_) => todo!(),
             _ => {
-                dbg!(expr);
                 err_reporter.report(&Error::ExprNotAllowed.to_spanned(span));
             }
         }

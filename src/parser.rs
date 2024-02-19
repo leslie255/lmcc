@@ -139,7 +139,7 @@ impl DeclSpecifiers {
                     }
                 }
                 None => {
-                    self.signness = Some(Signness::Signed.to_spanned(span));
+                    self.signness = Some(Signness::Unsigned.to_spanned(span));
                 }
             },
             _ => return Err(()),
@@ -562,7 +562,7 @@ impl Parser {
             let ty = self
                 .ty_of_typename(*typename)
                 .cloned()
-                .unwrap_or(TyKind::Error.to_ty(false, false, None));
+                .unwrap_or(Ty::error());
             return Ty {
                 is_const: ty.is_const | decl_speci.const_.is_some(),
                 is_volatile: ty.is_volatile | decl_speci.volatile.is_some(),
@@ -626,8 +626,7 @@ impl Parser {
                             } else {
                                 self.err_reporter
                                     .report(&Error::IllegalArrLen.to_spanned(span));
-                                ty = TyKind::Error
-                                    .to_ty(false, false, None)
+                                ty = Ty::error()
                                     .to_spanned(prev_ty_span.join(closing_bracket_span));
                             }
                         }
@@ -637,8 +636,7 @@ impl Parser {
                                 expect_token!(self, Token::BracketClose, span);
                             self.err_reporter
                                 .report(&Error::IllegalArrLen.to_spanned(span));
-                            ty = TyKind::Error
-                                .to_ty(false, false, None)
+                            ty = Ty::error()
                                 .to_spanned(prev_ty_span.join(closing_bracket_span));
                         }
                         _ => {
@@ -648,8 +646,7 @@ impl Parser {
                             let prev_ty_span = ty.span();
                             let closing_bracket_span =
                                 expect_token!(self, Token::BracketClose, span);
-                            ty = TyKind::Error
-                                .to_ty(false, false, None)
+                            ty = Ty::error()
                                 .to_spanned(prev_ty_span.join(closing_bracket_span));
                             break;
                         }

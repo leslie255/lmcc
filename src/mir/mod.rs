@@ -69,6 +69,9 @@ impl_name_type!(add_enum, enum_, enum_names, EnumFields);
 
 #[derive(Debug, Clone)]
 pub struct FuncData {
+    /// `extern` on function has no effect, we only care about `static`.
+    /// `inline` is also ignored.
+    pub is_static: bool,
     pub sig: Signature,
     pub mir_func: Option<MirFunction>,
 }
@@ -128,8 +131,10 @@ pub enum MirInst {
     /// - assignments (one of the operand is a place not a value).
     /// - member-accessing (see `Place`).
     BinOp(Place, Value, BinOpKind, Value),
-    CallStatic(VarId, IdentStr, Vec<Value>),
-    CallDynamic(VarId, Value, Vec<Value>),
+    /// Call a function statically, store it into a variable if result isn't `void`.
+    CallStatic(Option<VarId>, IdentStr, Vec<Value>),
+    /// Call a function dynamically, store it into a variable if result isn't `void`.
+    CallDynamic(Option<VarId>, Value, Vec<Value>),
     /// Block terminator.
     Term(MirTerm),
 }
@@ -326,7 +331,7 @@ impl Debug for MirInst {
             Self::BitfieldAssign(..) => write!(f, "TODO(bitfield assign)"),
             Self::UnOp(place, op, oper) => write!(f, "{place:?} = {op} {oper:?}"),
             Self::BinOp(place, lhs, op, rhs) => write!(f, "{place:?} = {lhs:?} {op} {rhs:?}"),
-            Self::CallStatic(lhs, callee, args) => {
+            Self::CallStatic(Some(lhs), callee, args) => {
                 write!(f, "{lhs:?} = call {callee:?}(")?;
                 let f = args.iter().try_do_in_between(
                     f,
@@ -335,8 +340,25 @@ impl Debug for MirInst {
                 )?;
                 write!(f, ")")
             }
-            Self::CallDynamic(lhs, callee, args) => {
+            Self::CallStatic(None, callee, args) => {
+                write!(f, "call {callee:?}(")?;
+                let f = args.iter().try_do_in_between(
+                    f,
+                    |f| write!(f, ","),
+                    |f, arg| write!(f, "{arg:?}"),
+                )?;
+                write!(f, ")")
+            }
+            Self::CallDynamic(Some(lhs), callee, args) => {
                 write!(f, "{lhs:?} = call ({callee:?})(")?;
+                let f = args.iter().try_do_in_between(
+                    f,
+                    |f| write!(f, ","),
+                    |f, arg| write!(f, "{arg:?}"),
+                )?;
+                write!(f, ")")
+            }Self::CallDynamic(None, callee, args) => {
+                write!(f, "call ({callee:?})(")?;
                 let f = args.iter().try_do_in_between(
                     f,
                     |f| write!(f, ","),

@@ -29,17 +29,18 @@ macro panic_expr_error {
 
 pub fn make_mir_for_item(cx: &mut NamesContext, item: DeclItem, err_reporter: Rc<ErrorReporter>) {
     match item {
-        DeclItem::Func(_func_speci, ref sig, name, body) => {
+        DeclItem::Func(func_speci, sig, name, body) => {
             cx.funcs.insert(
                 *name,
                 FuncData {
+                    is_static: func_speci.linkage.is_staic(),
                     sig: sig.clone(),
                     mir_func: None,
                 },
             );
             if let Some(body) = body {
                 cx.locals.enters_block();
-                let mut func_builder = MirFuncBuilder::new(cx, err_reporter, *name, sig.clone());
+                let mut func_builder = MirFuncBuilder::new(cx, err_reporter, *name, sig);
                 for stmt in body {
                     func_builder.build_stmt(stmt);
                 }
@@ -224,7 +225,8 @@ impl<'cx> MirFuncBuilder<'cx> {
             }
         }
     }
-    fn build_decl(&mut self, item: DeclItem, span: Span) -> Option<()> {
+    fn build_decl(&mut self, item: Spanned<DeclItem>) -> Option<()> {
+        let (item, span) = item.into_pair();
         match item {
             DeclItem::Var(VarSpecifier::Typedef, _, _, None) => Some(()),
             DeclItem::Var(VarSpecifier::Typedef, _, _, Some(_rhs)) => {
@@ -264,6 +266,58 @@ impl<'cx> MirFuncBuilder<'cx> {
             }
         }
     }
+    fn build_call(
+        &mut self,
+        callee: Spanned<Expr>,
+        args: Spanned<Vec<Spanned<Expr>>>,
+    ) -> Option<(Value, Ty)> {
+        let (callee, callee_span) = callee.into_pair();
+        match callee {
+            Expr::Error => panic_expr_error!(callee_span),
+            Expr::Ident(ident) => {
+                let mut arg_vals = Vec::<Value>::with_capacity(args.len());
+                let Some(func_data) = self.cx.funcs.get(&ident) else {
+                    self.err_reporter
+                        .report(&Error::FuncDoesNotExist(ident).to_spanned(callee_span));
+                    return None;
+                };
+                let sig = &func_data.sig;
+                if args.len() != sig.args.len() {
+                    self.err_reporter.report(
+                        &Error::MismatchedArgCount(sig.args.len(), args.len())
+                            .to_spanned(args.span()),
+                    );
+                }
+                let sig = sig.clone(); // TODO: optimize this clone away.
+                for (arg, (expect_ty, _)) in args.into_inner().into_iter().zip(&sig.args) {
+                    let (arg_val, arg_ty) = self.build_expr(arg)?;
+                    if &expect_ty.kind != &arg_ty.kind {
+                        todo!(
+                            "Auto type casting & type checking (expect: {:?}, got: {:?})",
+                            expect_ty,
+                            arg_ty,
+                        );
+                    }
+                    arg_vals.push(arg_val);
+                }
+                match &sig.ret_ty.kind {
+                    TyKind::Void => {
+                        self.add_inst(MirInst::CallStatic(None, ident, arg_vals));
+                        Some((Value::Void, Ty::void()))
+                    }
+                    _ => {
+                        let var_id = self.declare_var(sig.ret_ty.inner().clone(), None, true)?;
+                        self.add_inst(MirInst::CallStatic(Some(var_id), ident, arg_vals));
+                        Some((
+                            Value::CopyPlace(Place::just_var(var_id)),
+                            sig.ret_ty.into_inner(),
+                        ))
+                    }
+                }
+            }
+            _ => todo!("dynamic function calls"),
+        }
+    }
     fn build_expr(&mut self, expr: Spanned<Expr>) -> Option<(Value, Ty)> {
         let (expr, span) = expr.into_pair();
         match expr {
@@ -292,7 +346,7 @@ impl<'cx> MirFuncBuilder<'cx> {
             Expr::InfixOp(_, _, _) => todo!(),
             Expr::OpAssign(_, _, _) => todo!(),
             Expr::Typecast(_, _) => todo!(),
-            Expr::Call(_, _) => todo!(),
+            Expr::Call(callee, args) => self.build_call(callee.into_unboxed(), args),
             Expr::Subscript(_, _) => todo!(),
             Expr::FieldPath(_, _) => todo!(),
             Expr::List(_) => todo!(),
@@ -345,14 +399,18 @@ impl<'cx> MirFuncBuilder<'cx> {
             }
             Expr::InfixOp(_, _, _) => todo!(),
             Expr::OpAssign(_, _, _) => todo!(),
-            Expr::Decl(item) => self.build_decl(item, span)?,
-            Expr::DeclList(_) => todo!(),
+            Expr::Decl(item) => self.build_decl(item.to_spanned(span))?,
+            Expr::DeclList(items) => {
+                for item in items {
+                    self.build_decl(item.to_spanned(span))?;
+                }
+            }
             Expr::EmptyDecl(_) => todo!(),
             Expr::Return(_) => todo!(),
             Expr::Labal(_) => todo!(),
             Expr::Goto(_) => todo!(),
             Expr::Typecast(_, _) => todo!(),
-            Expr::Call(_, _) => todo!(),
+            Expr::Call(callee, args) => _ = self.build_call(callee.into_unboxed(), args)?,
             Expr::Subscript(_, _) => todo!(),
             Expr::Break => todo!(),
             Expr::Continue => todo!(),

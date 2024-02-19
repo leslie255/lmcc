@@ -124,6 +124,24 @@ impl Ty {
             _ => self,
         }
     }
+    /// Shorthand for making an `ERROR` (not `const`, not `volatile`, no typename) type.
+    pub const fn error() -> Self {
+        Self {
+            is_const: false,
+            is_volatile: false,
+            kind: TyKind::Error,
+            typename: None,
+        }
+    }
+    /// Shorthand for making a `void` (not `const`, not `volatile`, no typename) type.
+    pub const fn void() -> Self {
+        Self {
+            is_const: false,
+            is_volatile: false,
+            kind: TyKind::Void,
+            typename: None,
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Restrictness {
@@ -181,6 +199,11 @@ pub enum LinkageSpecifier {
     Default,
     Static,
     Extern,
+}
+impl LinkageSpecifier {
+    pub const fn is_staic(self) -> bool {
+        matches!(self, Self::Static)
+    }
 }
 /// Keywords that appears before a function declaration.
 /// Unlike the term used in documents of C standards (where **function specifier**  `inline`), function specifiers here means `inline` and **linkage specifier**.

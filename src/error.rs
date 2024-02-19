@@ -11,7 +11,9 @@ use std::{
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
-    file_reader::FileReader, source_string::SourceIdx, token::Token,
+    file_reader::FileReader,
+    source_string::SourceIdx,
+    token::Token,
     utils::{derive_display_from_debug, fixme, IdentStr},
 };
 
@@ -64,6 +66,8 @@ pub enum Error<'a> {
     RedefinitionOfVar(IdentStr),
     NonNumericInUnary,
     TypedefWithRhs,
+    FuncDoesNotExist(IdentStr),
+    MismatchedArgCount(usize, usize),
 }
 
 impl Error<'_> {
@@ -73,7 +77,12 @@ impl Error<'_> {
 }
 
 /// A value with attached span information.
-/// Implments `PartialEq` and `PartialOrd`, only the value itself would be compared, not the attched span.
+///
+/// When using `PartialEq` and `PartialOrd` on `Spanned<T>`, but only the value itself would be compared, not the attached span.
+///
+/// `Spanned<T>` isn't too different from two separate `T` and `Span`, it's only there to help clarify the intent of the code.
+/// e.g. A function that returns `Spanned<IdentStr>` is foundamentally not much different from a function that returns `(IdentStr, Span)`,
+/// but the former communicates the idea that the returned `Span` is the span of the identifier token, whereas the latter may require some explanation in its doc.
 #[derive(Clone, Copy)]
 pub struct Spanned<T> {
     inner: T,

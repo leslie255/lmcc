@@ -5,7 +5,7 @@ use index_vec::{index_vec, IndexVec};
 use crate::{
     ast::{
         DeclItem, Expr, FloatSize, InfixOpKind, IntSize, PrefixOpKind, Signature, Signness, Ty,
-        TyKind,
+        TyKind, VarSpecifier,
     },
     error::{Error, ErrorReporter, Span, Spanned, ToSpanned},
     mir::NumLiteralContent,
@@ -27,38 +27,34 @@ macro panic_expr_error {
     },
 }
 
-pub fn make_mir_for_item(
-    global: &mut GlobalContext,
-    item: DeclItem,
-    err_reporter: Rc<ErrorReporter>,
-) {
+pub fn make_mir_for_item(cx: &mut GlobalContext, item: DeclItem, err_reporter: Rc<ErrorReporter>) {
     match item {
         DeclItem::Func(_func_speci, ref sig, name, body) => {
-            global.funcs.insert(
-                name,
+            cx.funcs.insert(
+                *name,
                 FuncData {
                     sig: sig.clone(),
                     mir_func: None,
                 },
             );
             if let Some(body) = body {
-                global.names.enters_block();
-                let mut func_builder = MirFuncBuilder::new(global, err_reporter, name, sig.clone());
+                cx.names.enters_block();
+                let mut func_builder = MirFuncBuilder::new(cx, err_reporter, *name, sig.clone());
                 for stmt in body {
                     func_builder.build_stmt(stmt);
                 }
-                global.funcs.get_mut(&name).unwrap().mir_func = Some(func_builder.mir_func);
-                dbg!(&global.names);
-                global.names.leaves_block();
-                dbg!(&global.names);
+                cx.funcs.get_mut(&name).unwrap().mir_func = Some(func_builder.mir_func);
+                dbg!(&cx.names);
+                cx.names.leaves_block();
+                dbg!(&cx.names);
             }
         }
         _ => todo!(),
     }
 }
 
-struct MirFuncBuilder<'g> {
-    global: &'g mut GlobalContext,
+struct MirFuncBuilder<'cx> {
+    cx: &'cx mut GlobalContext,
     err_reporter: Rc<ErrorReporter>,
     mir_func: MirFunction,
     /// The "cursor" for writing new instructions onto.
@@ -66,11 +62,11 @@ struct MirFuncBuilder<'g> {
     func_name: IdentStr,
 }
 
-impl<'g> MirFuncBuilder<'g> {
+impl<'cx> MirFuncBuilder<'cx> {
     /// Function itself must have already been added to global context.
     /// Requires calling `GlobalContext::{enters_block, leaves_block}` outside.
     pub fn new(
-        global: &'g mut GlobalContext,
+        cx: &'cx mut GlobalContext,
         err_reporter: Rc<ErrorReporter>,
         func_name: IdentStr,
         sig: Signature,
@@ -82,33 +78,36 @@ impl<'g> MirFuncBuilder<'g> {
                 is_arg: true,
                 ty: ty.clone(),
                 name,
+                is_tmp: false,
             })
             .collect();
         let args: Vec<VarId> = vars.indices().collect();
-        for (id, info) in vars.iter_enumerated() {
-            if let Some(name) = info.name {
-                _ = global
-                    .names
-                    .add_var(*name, (id, info.ty.clone()))
-                    .inspect_err(|()| {
-                        err_reporter
-                            .report(&Error::RedefinitionOfVar(*name).to_spanned(name.span()))
-                    });
-            }
-        }
         let mir_func = MirFunction {
             args,
             ret: sig.ret_ty.into_inner(),
             vars,
             blocks: index_vec![MirBlock::default()],
         };
-        Self {
-            global,
+        let self_ = Self {
+            cx,
             err_reporter,
             mir_func,
             current_block: BlockId(0),
             func_name,
+        };
+        // Declare argument variables in context.
+        for (id, info) in self_.mir_func.vars.iter_enumerated() {
+            // Have to manually inline `add_var_to_cx` because partial borrow.
+            if let Some(name) = info.name {
+                let ty = info.ty.clone();
+                _ = self_.cx.names.add_var(*name, (id, ty)).inspect_err(|()| {
+                    self_
+                        .err_reporter
+                        .report(&Error::RedefinitionOfVar(*name).to_spanned(name.span()))
+                });
+            }
         }
+        self_
     }
     fn add_inst(&mut self, inst: MirInst) {
         let current_block = &mut self.mir_func.blocks[self.current_block];
@@ -121,16 +120,35 @@ impl<'g> MirFuncBuilder<'g> {
             current_block.insts.push(inst);
         }
     }
-    fn solve_typename<'a: 'g, 'b: 'g>(&'a self, ty: &'b Ty) -> &'g Ty {
-        if let &TyKind::Typename(typename) = &ty.kind {
-            let mut ty = self.global.names.typename(typename).unwrap();
-            while let &TyKind::Typename(typename) = &ty.kind {
-                ty = self.global.names.typename(typename).unwrap();
-            }
-            ty
-        } else {
-            ty
+    fn add_var_to_cx(&mut self, name: Spanned<IdentStr>, id: VarId, ty: Ty) -> Option<()> {
+        self.cx
+            .names
+            .add_var(*name, (id, ty))
+            .inspect_err(|()| {
+                self.err_reporter
+                    .report(&Error::RedefinitionOfVar(*name).to_spanned(name.span()))
+            })
+            .ok()?;
+        Some(())
+    }
+
+    fn declare_var(
+        &mut self,
+        ty: Ty,
+        name: Option<Spanned<IdentStr>>,
+        is_tmp: bool,
+    ) -> Option<VarId> {
+        let var_info = VarInfo {
+            is_arg: false,
+            ty: ty.clone(),
+            name,
+            is_tmp,
+        };
+        let var_id = self.mir_func.vars.push(var_info);
+        if let Some(name) = name {
+            self.add_var_to_cx(name, var_id, ty)?;
         }
+        Some(var_id)
     }
     fn build_num_literal(&self, num: NumValue, span: Span) -> Option<(NumLiteralContent, Ty)> {
         match num {
@@ -143,7 +161,7 @@ impl<'g> MirFuncBuilder<'g> {
                     };
                     Some((
                         NumLiteralContent::U(u),
-                        TyKind::Int(Signness::Unsigned, size).to_ty(true, false),
+                        TyKind::Int(Signness::Unsigned, size).to_ty(true, false, None),
                     ))
                 } else if let Ok(i) = i64::try_from(i) {
                     let size = if i32::try_from(i).is_ok() {
@@ -153,7 +171,7 @@ impl<'g> MirFuncBuilder<'g> {
                     };
                     Some((
                         NumLiteralContent::I(i),
-                        TyKind::Int(Signness::Signed, size).to_ty(true, false),
+                        TyKind::Int(Signness::Signed, size).to_ty(true, false, None),
                     ))
                 } else {
                     self.err_reporter
@@ -163,21 +181,17 @@ impl<'g> MirFuncBuilder<'g> {
             }
             crate::token::NumValue::F(f) => Some((
                 NumLiteralContent::F(f),
-                TyKind::Float(FloatSize::_64).to_ty(true, false),
+                TyKind::Float(FloatSize::_64).to_ty(true, false, None),
             )),
         }
     }
     fn build_unary_add(&mut self, operand: Spanned<Expr>) -> Option<(Value, Ty)> {
         let span = operand.span();
         let (value, ty) = self.build_expr(operand)?;
-        match &self.solve_typename(&ty).kind {
-            TyKind::Int(_, _) | TyKind::Float(_) | TyKind::Bool => (),
-            TyKind::Typename(_) => unreachable!(),
-            _ => {
-                self.err_reporter
-                    .report(&Error::NonNumericInUnary.to_spanned(span));
-                return None;
-            }
+        if !matches!(&ty.kind, TyKind::Int(..) | TyKind::Float(..) | TyKind::Bool) {
+            self.err_reporter
+                .report(&Error::NonNumericInUnary.to_spanned(span));
+            return None;
         }
         Some((value, ty))
     }
@@ -189,8 +203,10 @@ impl<'g> MirFuncBuilder<'g> {
                 let (num, mut ty) = self.build_num_literal(num, span)?;
                 let num = match num {
                     NumLiteralContent::U(u) => {
-                        ty = match &ty.kind {
-                            &TyKind::Int(_, size) => TyKind::Int(Signness::Signed, size).to_ty(true, false),
+                        ty = match ty.kind {
+                            TyKind::Int(_, size) => {
+                                TyKind::Int(Signness::Signed, size).to_ty(true, false, None)
+                            }
                             _ => unreachable!(),
                         };
                         NumLiteralContent::I(-i64::from_be_bytes(u.to_be_bytes()))
@@ -202,16 +218,52 @@ impl<'g> MirFuncBuilder<'g> {
             }
             expr => {
                 let (_value, ty) = self.build_expr(expr.to_spanned(span))?;
-                match &self.solve_typename(&ty).kind {
-                    TyKind::Int(_, _) | TyKind::Float(_) | TyKind::Bool => (),
-                    TyKind::Typename(_) => unreachable!(),
-                    _ => {
-                        self.err_reporter
-                            .report(&Error::NonNumericInUnary.to_spanned(span));
-                        return None;
-                    }
+                if !matches!(&ty.kind, TyKind::Int(..) | TyKind::Float(..) | TyKind::Bool) {
+                    self.err_reporter
+                        .report(&Error::NonNumericInUnary.to_spanned(span));
+                    return None;
                 }
                 todo!()
+            }
+        }
+    }
+    fn build_decl(&mut self, item: DeclItem, span: Span) -> Option<()> {
+        match item {
+            DeclItem::Var(VarSpecifier::Typedef, _, _, None) => Some(()),
+            DeclItem::Var(VarSpecifier::Typedef, _, _, Some(_rhs)) => {
+                self.err_reporter
+                    .report(&Error::TypedefWithRhs.to_spanned(span));
+                None
+            }
+            // `register` storage specifier is ignored.
+            DeclItem::Var(
+                VarSpecifier::Auto | VarSpecifier::Register | VarSpecifier::Unspecified,
+                ty,
+                name,
+                rhs,
+            ) => {
+                let var_id = self.declare_var(ty.into_inner(), Some(name), false)?;
+                if let Some(rhs) = rhs {
+                    // Have to manually re-write part of `build_assign` here because partial borrow.
+                    let place = Place::just_var(var_id).to_spanned(name.span());
+                    let (value, rhs_ty) = self.build_expr(rhs.into_unboxed())?;
+                    let lhs_ty = &self.mir_func.vars[var_id].ty;
+                    if lhs_ty.kind != rhs_ty.kind {
+                        todo!(
+                            "Auto type casting & type checking (lhs: {lhs_ty:?}, rhs: {rhs_ty:?})"
+                        );
+                    }
+                    self.add_inst(MirInst::Assign(place.into_inner(), value));
+                }
+                Some(())
+            }
+            DeclItem::Var(VarSpecifier::Extern | VarSpecifier::Static, ..) => {
+                todo!("static/extern variables")
+            }
+            DeclItem::Func(..) => {
+                self.err_reporter
+                    .report(&Error::ExprNotAllowed.to_spanned(span));
+                None
             }
         }
     }
@@ -229,7 +281,7 @@ impl<'g> MirFuncBuilder<'g> {
             }
             Expr::CharLiteral(c) => Some((
                 Value::Char(c),
-                TyKind::Int(Signness::Signed, IntSize::_8).to_ty(true, false),
+                TyKind::Int(Signness::Signed, IntSize::_8).to_ty(true, false, None),
             )),
             Expr::StrLiteral(_) => todo!(),
             Expr::PrefixOp(PrefixOpKind::UnarySub, expr) => {
@@ -269,6 +321,18 @@ impl<'g> MirFuncBuilder<'g> {
             }
         }
     }
+    fn build_assign(&mut self, lhs: Spanned<Expr>, rhs: Spanned<Expr>) -> Option<()> {
+        let lhs_span = lhs.span();
+        let (place, lhs_ty) = self.build_place(lhs)?;
+        let place = place.to_spanned(lhs_span);
+        let lhs_ty = lhs_ty;
+        let (value, rhs_ty) = self.build_expr(rhs)?;
+        if lhs_ty.kind != rhs_ty.kind {
+            todo!("Auto type casting & type checking (lhs: {lhs_ty:?}, rhs: {rhs_ty:?})");
+        }
+        self.add_inst(MirInst::Assign(place.into_inner(), value));
+        Some(())
+    }
     pub fn build_stmt(&mut self, stmt: Spanned<Expr>) -> Option<()> {
         let (stmt, span) = stmt.into_pair();
         match stmt {
@@ -280,18 +344,11 @@ impl<'g> MirFuncBuilder<'g> {
             Expr::PrefixOp(_, _) => todo!(),
             Expr::PostfixOp(_, _) => todo!(),
             Expr::InfixOp(lhs, InfixOpKind::Eq, rhs) => {
-                let (place, lhs_ty) = self.build_place(lhs.into_unboxed())?;
-                let (value, rhs_ty) = self.build_expr(rhs.into_unboxed())?;
-                let lhs_ty = self.solve_typename(&lhs_ty);
-                let rhs_ty = self.solve_typename(&rhs_ty);
-                if lhs_ty.kind != rhs_ty.kind {
-                    todo!("Auto type casting & type checking (lhs: {lhs_ty:?}, rhs: {rhs_ty:?})");
-                }
-                self.add_inst(MirInst::Assign(place, value));
+                self.build_assign(lhs.into_unboxed(), rhs.into_unboxed())?;
             }
             Expr::InfixOp(_, _, _) => todo!(),
             Expr::OpAssign(_, _, _) => todo!(),
-            Expr::Decl(_) => todo!(),
+            Expr::Decl(item) => self.build_decl(item, span)?,
             Expr::DeclList(_) => todo!(),
             Expr::EmptyDecl(_) => todo!(),
             Expr::Return(_) => todo!(),
@@ -321,7 +378,7 @@ impl<'g> MirFuncBuilder<'g> {
         match expr {
             Expr::Error => panic_expr_error!(span),
             Expr::Ident(name) => {
-                let Some(&(var_id, ref ty)) = self.global.names.var(name) else {
+                let Some(&(var_id, ref ty)) = self.cx.names.var(name) else {
                     self.err_reporter
                         .report(&Error::VarDoesNotExist(name).to_spanned(span));
                     return None;

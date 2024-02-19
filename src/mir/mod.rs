@@ -26,7 +26,6 @@ pub struct GlobalContext {
 #[derive(Debug, Clone, Default)]
 pub struct Names {
     pub vars: HashMap<IdentStr, (VarId, Ty)>,
-    pub typenames: HashMap<IdentStr, Ty>,
     pub struct_names: HashMap<IdentStr, StructFields>,
     pub union_names: HashMap<IdentStr, StructFields>,
     pub enum_names: HashMap<IdentStr, EnumFields>,
@@ -63,7 +62,6 @@ macro impl_name_type($add_name:ident, $name:ident, $map:ident, $V:ty) {
     }
 }
 impl_name_type!(add_var, var, vars, (VarId, Ty));
-impl_name_type!(add_typename, typename, typenames, Ty);
 impl_name_type!(add_struct, struct_, struct_names, StructFields);
 impl_name_type!(add_union, union_, union_names, StructFields);
 impl_name_type!(add_enum, enum_, enum_names, EnumFields);
@@ -163,6 +161,9 @@ pub struct VarInfo {
     pub(self) ty: Ty,
     /// If it's an actual variable declared by the user, tag it with a name for debug.
     pub(self) name: Option<Spanned<IdentStr>>,
+    /// A variable can be flagged as a a tmp variable if it is single assigned and declared/used within the same block.
+    /// This information is a useful for later stages in the compilation.
+    pub(self) is_tmp: bool,
 }
 
 /// A place is an l-value, assignable and addressable.
@@ -191,6 +192,15 @@ pub struct Place {
     /// See `Place`.
     /// Note that they are stored in reverse of their actual order due to the way it's parsed.
     projections: Vec<PlaceProjection>,
+}
+
+impl Place {
+    pub const fn just_var(root: VarId) -> Self {
+        Self {
+            root,
+            projections: Vec::new(),
+        }
+    }
 }
 
 /// See `Place`.

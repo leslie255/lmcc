@@ -1,3 +1,5 @@
 void f(int x) {
-    x = -1;
+    int y;
+    y = -1;
+    x = y;
 }

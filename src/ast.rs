@@ -86,18 +86,18 @@ pub enum TyKind {
     Struct(Option<IdentStr>, Option<StructFields>),
     Union(Option<IdentStr>, Option<StructFields>),
     Enum(Option<IdentStr>, Option<EnumFields>),
-    Typename(IdentStr),
     Void,
     Error,
 }
 pub type StructFields = Vec<(Ty, IdentStr)>;
 pub type EnumFields = Vec<(IdentStr, Option<ChildExpr>)>;
 impl TyKind {
-    pub fn to_ty(self, is_const: bool, is_volatile: bool) -> Ty {
+    pub fn to_ty(self, is_const: bool, is_volatile: bool, typename: Option<IdentStr>) -> Ty {
         Ty {
             kind: self,
             is_const,
             is_volatile,
+            typename,
         }
     }
 }
@@ -106,6 +106,8 @@ pub struct Ty {
     pub is_const: bool,
     pub is_volatile: bool,
     pub kind: TyKind,
+    /// Is this type expressed as a typename?
+    pub typename: Option<IdentStr>,
 }
 impl Ty {
     pub fn is_arr(&self) -> bool {
@@ -117,6 +119,7 @@ impl Ty {
                 kind: TyKind::Ptr(Restrictness::NoRestrict, ty),
                 is_const: self.is_const,
                 is_volatile: self.is_volatile,
+                typename: self.typename,
             },
             _ => self,
         }
@@ -300,14 +303,14 @@ pub enum DeclItem {
     Var(
         VarSpecifier,
         Spanned<Ty>,
-        IdentStr,
-        Option<Box<Spanned<Expr>>>,
+        Spanned<IdentStr>,
+        Option<ChildExpr>,
     ),
     Func(
         FuncSpecifier,
         Signature,
-        IdentStr,
-        Option<Vec<Spanned<Expr>>>,
+        Spanned<IdentStr>,
+        Option<ExprBlock>,
     ),
 }
 
@@ -405,7 +408,7 @@ impl Debug for FuncSpecifier {
 }
 
 impl Debug for Ty {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, mut f: &mut fmt::Formatter<'_>) -> fmt::Result {
         macro const_() {
             if self.is_const {
                 "const "
@@ -424,7 +427,7 @@ impl Debug for Ty {
             match $fields {
                 Some(fields) => {
                     write!(f, " {{")?;
-                    let f = fields.iter().try_do_in_between(
+                    f = fields.iter().try_do_in_between(
                         f,
                         |f| {
                             if f.alternate() {
@@ -435,9 +438,9 @@ impl Debug for Ty {
                         },
                         |f, (ty, name)| write!(f, "{ty:?} {name:?}"),
                     )?;
-                    write!(f, "}}")
+                    write!(f, "}}")?;
                 }
-                None => Ok(()),
+                None => (),
             }
         }
         match &self.kind {
@@ -446,18 +449,18 @@ impl Debug for Ty {
                     write!(f, "unsigned ")?;
                 }
                 match size {
-                    IntSize::_8 => write!(f, "{}{}char", const_!(), volatile!()),
-                    IntSize::_16 => write!(f, "{}{}short", const_!(), volatile!()),
-                    IntSize::_32 => write!(f, "{}{}int", const_!(), volatile!()),
-                    IntSize::_64 => write!(f, "{}{}long", const_!(), volatile!()),
+                    IntSize::_8 => write!(f, "{}{}char", const_!(), volatile!())?,
+                    IntSize::_16 => write!(f, "{}{}short", const_!(), volatile!())?,
+                    IntSize::_32 => write!(f, "{}{}int", const_!(), volatile!())?,
+                    IntSize::_64 => write!(f, "{}{}long", const_!(), volatile!())?,
                 }
             }
             TyKind::Float(FloatSize::LongDouble) => {
-                write!(f, "{}{}long double", const_!(), volatile!())
+                write!(f, "{}{}long double", const_!(), volatile!())?
             }
-            TyKind::Float(FloatSize::_64) => write!(f, "{}{}double", const_!(), volatile!()),
-            TyKind::Float(FloatSize::_32) => write!(f, "{}{}float", const_!(), volatile!()),
-            TyKind::Bool => write!(f, "{}{}_Bool", const_!(), volatile!()),
+            TyKind::Float(FloatSize::_64) => write!(f, "{}{}double", const_!(), volatile!())?,
+            TyKind::Float(FloatSize::_32) => write!(f, "{}{}float", const_!(), volatile!())?,
+            TyKind::Bool => write!(f, "{}{}_Bool", const_!(), volatile!())?,
             TyKind::Ptr(restrict, pointee) => write!(
                 f,
                 "{pointee:?}*{}{}{}",
@@ -468,8 +471,8 @@ impl Debug for Ty {
                 } else {
                     ""
                 },
-            ),
-            TyKind::FixedArr(ty, len) => write!(f, "{}{}{ty:?}[{len:?}]", const_!(), volatile!()),
+            )?,
+            TyKind::FixedArr(ty, len) => write!(f, "{}{}{ty:?}[{len:?}]", const_!(), volatile!())?,
             TyKind::Struct(Some(name), fields) => {
                 write!(f, "{}{}struct {name:?}", const_!(), volatile!())?;
                 write_struct_union_fields!(fields)
@@ -494,7 +497,7 @@ impl Debug for Ty {
                 match fields {
                     Some(fields) => {
                         write!(f, " {{")?;
-                        let f = fields.iter().try_do_in_between(
+                        f = fields.iter().try_do_in_between(
                             f,
                             |f| {
                                 if f.alternate() {
@@ -505,14 +508,17 @@ impl Debug for Ty {
                             },
                             |f, (ty, name)| write!(f, "{ty:?} {name:?}"),
                         )?;
-                        write!(f, "}}")
+                        write!(f, "}}")?;
                     }
-                    None => Ok(()),
+                    None => (),
                 }
             }
-            TyKind::Typename(name) => write!(f, "{}{}typename {name:?}", const_!(), volatile!()),
-            TyKind::Void => write!(f, "{}{}void", const_!(), volatile!()),
-            TyKind::Error => write!(f, "{}{}ERROR", const_!(), volatile!()),
+            TyKind::Void => write!(f, "{}{}void", const_!(), volatile!())?,
+            TyKind::Error => write!(f, "{}{}ERROR", const_!(), volatile!())?,
+        }
+        match self.typename {
+            Some(typename) => write!(f, " (aka. {typename:?})"),
+            None => Ok(()),
         }
     }
 }

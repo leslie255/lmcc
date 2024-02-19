@@ -63,6 +63,7 @@ pub enum Error<'a> {
     ExprNotAllowed,
     RedefinitionOfVar(IdentStr),
     NonNumericInUnary,
+    TypedefWithRhs,
 }
 
 impl Error<'_> {

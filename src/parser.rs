@@ -278,6 +278,10 @@ impl Parser {
             .is_some()
     }
 
+    fn ty_of_typename(&self, typename: IdentStr) -> Option<&Ty> {
+        self.typenames.iter().rev().find_map(|m| m.get(&typename))
+    }
+
     fn enters_block(&mut self) {
         self.typenames.push(HashMap::new());
     }
@@ -555,7 +559,17 @@ impl Parser {
             ensure_no!(signness);
             ensure_no!(struct_, ConflictingTypeSpecifier);
             ensure_no!(union_, ConflictingTypeSpecifier);
-            TyKind::Typename(*typename)
+            let ty = self
+                .ty_of_typename(*typename)
+                .cloned()
+                .unwrap_or(TyKind::Error.to_ty(false, false, None));
+            return Ty {
+                is_const: ty.is_const | decl_speci.const_.is_some(),
+                is_volatile: ty.is_volatile | decl_speci.volatile.is_some(),
+                kind: ty.kind,
+                typename: Some(*typename),
+            }
+            .to_spanned(decl_speci.span());
         } else if let Some(struct_) = &decl_speci.struct_ {
             ensure_no!(signness);
             ensure_no!(union_, ConflictingTypeSpecifier);
@@ -576,7 +590,11 @@ impl Parser {
                 .report(&Error::ExpectTy.to_spanned(decl_speci.span()));
             TyKind::Error
         }
-        .to_ty(decl_speci.const_.is_some(), decl_speci.volatile.is_some())
+        .to_ty(
+            decl_speci.const_.is_some(),
+            decl_speci.volatile.is_some(),
+            None,
+        )
         .to_spanned(decl_speci.span())
     }
 
@@ -593,7 +611,7 @@ impl Parser {
                         Token::BracketClose => {
                             self.tokens.next();
                             ty = TyKind::Ptr(Restrictness::NoRestrict, Box::new(ty.into_inner()))
-                                .to_ty(false, false)
+                                .to_ty(false, false, None)
                                 .to_spanned(span);
                         }
                         &Token::NumLiteral(NumValue::I(i)) => {
@@ -603,13 +621,13 @@ impl Parser {
                                 expect_token!(self, Token::BracketClose, span);
                             if let Ok(i) = u64::try_from(i) {
                                 ty = TyKind::FixedArr(Box::new(ty.into_inner()), i)
-                                    .to_ty(false, false)
+                                    .to_ty(false, false, None)
                                     .to_spanned(prev_ty_span.join(closing_bracket_span));
                             } else {
                                 self.err_reporter
                                     .report(&Error::IllegalArrLen.to_spanned(span));
                                 ty = TyKind::Error
-                                    .to_ty(false, false)
+                                    .to_ty(false, false, None)
                                     .to_spanned(prev_ty_span.join(closing_bracket_span));
                             }
                         }
@@ -620,7 +638,7 @@ impl Parser {
                             self.err_reporter
                                 .report(&Error::IllegalArrLen.to_spanned(span));
                             ty = TyKind::Error
-                                .to_ty(false, false)
+                                .to_ty(false, false, None)
                                 .to_spanned(prev_ty_span.join(closing_bracket_span));
                         }
                         _ => {
@@ -631,7 +649,7 @@ impl Parser {
                             let closing_bracket_span =
                                 expect_token!(self, Token::BracketClose, span);
                             ty = TyKind::Error
-                                .to_ty(false, false)
+                                .to_ty(false, false, None)
                                 .to_spanned(prev_ty_span.join(closing_bracket_span));
                             break;
                         }
@@ -689,7 +707,7 @@ impl Parser {
                         },
                         Box::new(ty.into_inner()),
                     )
-                    .to_ty(const_.is_some(), volatile.is_some())
+                    .to_ty(const_.is_some(), volatile.is_some(), None)
                     .to_spanned(span);
                 }
                 _ => break,
@@ -698,7 +716,10 @@ impl Parser {
         ty
     }
 
-    fn parse_fn_decl_args(&mut self, prev_span: Span) -> Option<Vec<(Ty, Option<Spanned<IdentStr>>)>> {
+    fn parse_fn_decl_args(
+        &mut self,
+        prev_span: Span,
+    ) -> Option<Vec<(Ty, Option<Spanned<IdentStr>>)>> {
         let mut args = Vec::<(Ty, Option<Spanned<IdentStr>>)>::new();
         let token = self.expect_peek_token(prev_span)?;
         if token.inner() == &Token::ParenClose {
@@ -796,8 +817,13 @@ impl Parser {
                 let rhs = self.parse_expr(ident_span, 16)?;
                 let rhs_span = rhs.span();
                 Some(
-                    Expr::Decl(DeclItem::Var(var_specs, ty, ident, Some(Box::new(rhs))))
-                        .to_spanned(ty_span.join(rhs_span)),
+                    Expr::Decl(DeclItem::Var(
+                        var_specs,
+                        ty,
+                        ident.to_spanned(ident_span),
+                        Some(rhs.into_boxed()),
+                    ))
+                    .to_spanned(ty_span.join(rhs_span)),
                 )
             }
             Some(t) if t.inner() == &Token::ParenOpen => {
@@ -818,22 +844,37 @@ impl Parser {
                         self.tokens.next();
                         let (body, span) = self.parse_block(span)?.into_pair();
                         Some(
-                            Expr::Decl(DeclItem::Func(func_speci, sig, ident, Some(body)))
-                                .to_spanned(ty_span.join(span)),
+                            Expr::Decl(DeclItem::Func(
+                                func_speci,
+                                sig,
+                                ident.to_spanned(ident_span),
+                                Some(body),
+                            ))
+                            .to_spanned(ty_span.join(span)),
                         )
                     }
                     Some((Token::Comma, _)) => todo!("list decls"),
                     Some(..) | None => Some(
-                        Expr::Decl(DeclItem::Func(func_speci, sig, ident, None))
-                            .to_spanned(ty_span.join(prev_span)),
+                        Expr::Decl(DeclItem::Func(
+                            func_speci,
+                            sig,
+                            ident.to_spanned(ident_span),
+                            None,
+                        ))
+                        .to_spanned(ty_span.join(prev_span)),
                     ),
                 }
             }
             _ => {
                 let var_specs = decl_speci.try_into_var_speci(&self.err_reporter);
                 Some(
-                    Expr::Decl(DeclItem::Var(var_specs, ty, ident, None))
-                        .to_spanned(ty_span.join(ident_span)),
+                    Expr::Decl(DeclItem::Var(
+                        var_specs,
+                        ty,
+                        ident.to_spanned(ident_span),
+                        None,
+                    ))
+                    .to_spanned(ty_span.join(ident_span)),
                 )
             }
         }
@@ -901,7 +942,7 @@ impl Parser {
                                 self.err_reporter
                                     .report(&Error::RhsInStructUnion.to_spanned(rhs.span()))
                             });
-                            fields.push((ty.into_inner(), name));
+                            fields.push((ty.into_inner(), *name));
                             omits_semicolon = true;
                         }
                         _ => {
@@ -1143,7 +1184,7 @@ impl Parser {
                     let decl_speci = self.parse_decl_speci(span, decl_speci)?;
                     let expr = self.parse_decl_content(decl_speci.span(), &decl_speci);
                     expr.as_ref().inspect(|expr| match expr.inner() {
-                        Expr::Decl(DeclItem::Var(VarSpecifier::Typedef, ty, name, _)) => {
+                        &Expr::Decl(DeclItem::Var(VarSpecifier::Typedef, ref ty, name, _)) => {
                             self.add_typename(*name, ty.inner().clone());
                         }
                         _ => (),
@@ -1200,7 +1241,7 @@ impl Parser {
             | Token::Typedef => {
                 let expr = self.parse_decl(span);
                 expr.as_ref().inspect(|expr| match expr.inner() {
-                    Expr::Decl(DeclItem::Var(VarSpecifier::Typedef, ty, name, _)) => {
+                    &Expr::Decl(DeclItem::Var(VarSpecifier::Typedef, ref ty, name, _)) => {
                         self.add_typename(*name, ty.inner().clone());
                     }
                     _ => (),

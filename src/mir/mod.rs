@@ -147,6 +147,8 @@ pub enum MirTerm {
     JumpIf(Value, BlockId, BlockId),
     /// `Value::Void` if returning void.
     Return(Value),
+    /// Unreachables is always trapped for easier debug.
+    Unreachable,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -357,7 +359,8 @@ impl Debug for MirInst {
                     |f, arg| write!(f, "{arg:?}"),
                 )?;
                 write!(f, ")")
-            }Self::CallDynamic(None, callee, args) => {
+            }
+            Self::CallDynamic(None, callee, args) => {
                 write!(f, "call ({callee:?})(")?;
                 let f = args.iter().try_do_in_between(
                     f,
@@ -377,6 +380,7 @@ impl Debug for MirTerm {
             Self::Jump(b) => write!(f, "jump {b:?}"),
             Self::JumpIf(cond, b0, b1) => write!(f, "jump {cond:?} ? {b0:?} : {b1:?}"),
             Self::Return(val) => write!(f, "return {val:?}"),
+            Self::Unreachable => write!(f, "unreachable"),
         }
     }
 }

@@ -14,7 +14,8 @@ use crate::{
 };
 
 use super::{
-    BlockId, FuncData, MirBlock, MirFunction, MirInst, NamesContext, Place, Value, VarId, VarInfo,
+    BlockId, FuncData, MirBlock, MirFunction, MirInst, MirTerm, NamesContext, Place, Value, VarId,
+    VarInfo,
 };
 
 /// `Expr::Error` should not occur in this stage of the compilation.
@@ -406,7 +407,17 @@ impl<'cx> MirFuncBuilder<'cx> {
                 }
             }
             Expr::EmptyDecl(_) => todo!(),
-            Expr::Return(_) => todo!(),
+            Expr::Return(None) => {
+                self.add_inst(MirInst::Term(MirTerm::Return(Value::Void)));
+            }
+            Expr::Return(Some(expr)) => {
+                let (value, ty) = self.build_expr(expr.into_unboxed())?;
+                let expect_ty = &self.mir_func.ret;
+                if ty.kind != expect_ty.kind {
+                    todo!("auto typecast / typecast");
+                }
+                self.add_inst(MirInst::Term(MirTerm::Return(value)));
+            }
             Expr::Labal(_) => todo!(),
             Expr::Goto(_) => todo!(),
             Expr::Typecast(_, _) => todo!(),

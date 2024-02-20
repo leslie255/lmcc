@@ -11,7 +11,7 @@ use crate::intern_str::InternStr;
 
 pub type IdentStr = InternStr<'static>;
 
-pub macro match_into($val:expr, $pat:pat => $result:expr) {
+pub macro match_into($val:expr, $pat:pat => $result:expr $(,)?) {
     match $val {
         $pat => Some($result),
         #[allow(unreachable_patterns)]
@@ -19,7 +19,7 @@ pub macro match_into($val:expr, $pat:pat => $result:expr) {
     }
 }
 
-pub macro match_into_unchecked($val:expr, $pat:pat => $result:expr) {
+pub macro match_into_unchecked($val:expr, $pat:pat => $result:expr $(,)?) {
     match $val {
         $pat => $result,
         #[allow(unreachable_patterns)]
@@ -96,24 +96,13 @@ impl<T> OptionTryExtension<T> for Option<T> {
     }
 }
 
-/// Const promotion for expressions that can't be implicitly const-promoted, such as calling a
-/// `const fn`.
-/// Requires providing an explicit type due to details in the syntax.
-/// Meant to be used like `const_promote!(T, const_fn())`.
-pub macro const_promote($ty:ty, $value:expr) {
-    static VALUE: $ty = $value;
-    &VALUE
-}
-
-/// Prints a FIXME message with file name and line number similar to `todo!`, but does not panic or
-/// exit.
+/// Prints a message starting with `FIXME [file:line:colume]`.
 pub macro fixme {
     () => {{
-        println!("[{}:{}] FIXME", file!(), line!());
+        eprintln!("FIXME [{}:{}:{}]", file!(), line!(), column!());
     }},
     ($($args:tt)*) => {{
-        print!("[{}:{}] FIXME ", file!(), line!());
-        println!($($args)*);
+        eprintln!("FIXME [{}:{}:{}] {}", file!(), line!(), column!(), format_args!($($args)*));
     }},
 }
 
@@ -171,9 +160,11 @@ impl<'a, T> MaybeMultiple<'a, T> {
     }
 }
 
+/// Technically have to be `unsafe` because `strict_provenance` is currently unstable.
+#[allow(private_bounds)]
 #[inline(always)]
-pub fn ptr_addr<T>(ptr: *const T) -> usize {
-    unsafe { mem::transmute(ptr) }
+pub const unsafe fn ptr_addr<T>(ptr: *const T) -> usize {
+    mem::transmute(ptr)
 }
 
 #[repr(transparent)]

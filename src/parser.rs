@@ -301,19 +301,11 @@ impl Parser {
             .insert(typename, ty);
     }
 
-    /// If token stream ends, reports `UnexpectedEOF` and return `None`.
-    fn expect_next_token(&mut self, prev_span: Span) -> Option<Spanned<Token>> {
-        self.tokens
-            .next()
-            .ok_or(Error::UnexpectedEof.to_spanned((prev_span.file, prev_span.end)))
-            .inspect_err(|e| self.err_reporter.report(e))
-            .ok()
-    }
-
     fn expect_ident(&mut self, prev_span: Span) -> Option<Spanned<IdentStr>> {
-        let token = self.expect_next_token(prev_span)?;
+        let token = self.expect_peek_token(prev_span)?;
         let span = token.span();
-        if let Token::Ident(ident) = token.into_inner() {
+        if let &Token::Ident(ident) = token.inner() {
+            self.tokens.next();
             Some(ident.to_spanned(prev_span))
         } else {
             self.err_reporter
@@ -626,8 +618,8 @@ impl Parser {
                             } else {
                                 self.err_reporter
                                     .report(&Error::IllegalArrLen.to_spanned(span));
-                                ty = Ty::error()
-                                    .to_spanned(prev_ty_span.join(closing_bracket_span));
+                                ty =
+                                    Ty::error().to_spanned(prev_ty_span.join(closing_bracket_span));
                             }
                         }
                         Token::NumLiteral(NumValue::F(_)) => {
@@ -636,8 +628,7 @@ impl Parser {
                                 expect_token!(self, Token::BracketClose, span);
                             self.err_reporter
                                 .report(&Error::IllegalArrLen.to_spanned(span));
-                            ty = Ty::error()
-                                .to_spanned(prev_ty_span.join(closing_bracket_span));
+                            ty = Ty::error().to_spanned(prev_ty_span.join(closing_bracket_span));
                         }
                         _ => {
                             self.err_reporter
@@ -646,8 +637,7 @@ impl Parser {
                             let prev_ty_span = ty.span();
                             let closing_bracket_span =
                                 expect_token!(self, Token::BracketClose, span);
-                            ty = Ty::error()
-                                .to_spanned(prev_ty_span.join(closing_bracket_span));
+                            ty = Ty::error().to_spanned(prev_ty_span.join(closing_bracket_span));
                             break;
                         }
                     }
@@ -1204,7 +1194,9 @@ impl Parser {
             }
             Token::StrLiteral(..) => {
                 let bytes = unsafe {
-                    match_into_unchecked!(self.tokens.next().unwrap_unchecked().into_inner(), Token::StrLiteral(s) => s)
+                    match_into_unchecked!(
+                        self.tokens.next().unwrap_unchecked().into_inner(),
+                        Token::StrLiteral(s) => s)
                 };
                 Some(Expr::StrLiteral(bytes).to_spanned(span))
             }

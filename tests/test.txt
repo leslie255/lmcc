@@ -3,8 +3,8 @@ void f(unsigned int);
 int g(int);
 
 int main() {
-    f(255);
-    g(-1);
-    return -1;
-    f(255);
+    f(-255.0);
+    g(0);
+    return 0;
+    f(-10);
 }

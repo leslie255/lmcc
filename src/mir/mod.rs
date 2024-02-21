@@ -240,6 +240,21 @@ pub enum NumLiteralContent {
     I(i64),
     F(f64),
 }
+impl From<u64> for NumLiteralContent {
+    fn from(value: u64) -> Self {
+        Self::U(value)
+    }
+}
+impl From<i64> for NumLiteralContent {
+    fn from(value: i64) -> Self {
+        Self::I(value)
+    }
+}
+impl From<f64> for NumLiteralContent {
+    fn from(value: f64) -> Self {
+        Self::F(value)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnOpKind {

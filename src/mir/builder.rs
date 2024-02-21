@@ -4,7 +4,8 @@ use index_vec::{index_vec, IndexVec};
 
 use crate::{
     ast::{
-        DeclItem, Expr, FloatSize, InfixOpKind, IntSize, PrefixOpKind, Signature, Signness, Ty, TyKind, Ty_, VarSpecifier
+        DeclItem, Expr, FloatSize, InfixOpKind, IntSize, PrefixOpKind, Signature, Signness, Ty,
+        TyKind, Ty_, VarSpecifier,
     },
     error::{Error, ErrorReporter, Span, Spanned, ToSpanned},
     mir::NumLiteralContent,
@@ -160,9 +161,46 @@ impl<'cx> MirFuncBuilder<'cx> {
         }
         if let &Value::Num(num) = &value {
             match &expect_ty.kind {
-                TyKind::Int(..) | TyKind::Float(..) | TyKind::Bool | TyKind::Ptr(..) => {
-                    return Some((Value::Num(num), expect_ty))
+                TyKind::Int(..) => {
+                    let num = match num {
+                        NumLiteralContent::U(..) | NumLiteralContent::I(..) => Value::Num(num),
+                        NumLiteralContent::F(f) if f.is_sign_positive() => {
+                            let u = f.round() as u64;
+                            Value::Num(u.into())
+                        }
+                        NumLiteralContent::F(f) if f.is_sign_negative() => {
+                            let i = f.round() as i64;
+                            Value::Num(i.into())
+                        }
+                        _ => unreachable!(),
+                    };
+                    return Some((num, expect_ty));
                 }
+                TyKind::Bool => {
+                    let is_true = match num {
+                        NumLiteralContent::U(u) => u != 0,
+                        NumLiteralContent::I(i) => i != 0,
+                        NumLiteralContent::F(f) => f != 0.0,
+                    };
+                    let num: u64 = if is_true { 1 } else { 0 };
+                    return Some((Value::Num(num.into()), expect_ty));
+                }
+                TyKind::Float(..) => {
+                    let num = match num {
+                        NumLiteralContent::U(u) => Value::Num((u as f64).into()),
+                        NumLiteralContent::I(i) => Value::Num((i as f64).into()),
+                        f @ NumLiteralContent::F(..) => Value::Num(f),
+                    };
+                    return Some((num, expect_ty));
+                }
+                TyKind::Ptr(..) => match num {
+                    NumLiteralContent::U(..) | NumLiteralContent::I(..) => {
+                        return Some((Value::Num(num), expect_ty));
+                    }
+                    _ => self
+                        .err_reporter
+                        .report(&Error::MismatchedType(&expect_ty, &value_ty).to_spanned(span)),
+                },
                 _ => self
                     .err_reporter
                     .report(&Error::MismatchedType(&expect_ty, &value_ty).to_spanned(span)),
@@ -309,14 +347,9 @@ impl<'cx> MirFuncBuilder<'cx> {
                 }
                 let sig = sig.clone(); // TODO: optimize this clone away.
                 for (arg, (expect_ty, _)) in args.into_inner().into_iter().zip(&sig.args) {
-                    let (arg_val, arg_ty) = self.build_expr(arg)?;
-                    if &expect_ty.kind != &arg_ty.kind {
-                        todo!(
-                            "Auto type casting & type checking (expect: {:?}, got: {:?})",
-                            expect_ty,
-                            arg_ty,
-                        );
-                    }
+                    let arg_span = arg.span();
+                    let arg = self.build_expr(arg)?;
+                    let (arg_val, _) = self.use_value(expect_ty.clone(), arg, arg_span)?;
                     arg_vals.push(arg_val);
                 }
                 match &sig.ret_ty.kind {

@@ -7,10 +7,10 @@ use crate::{
         DeclItem, Expr, FloatSize, InfixOpKind, IntSize, PrefixOpKind, Signature, Signness, Ty,
         TyKind, Ty_, VarSpecifier,
     },
-    error::{Error, ErrorReporter, Span, Spanned, ToSpanned},
+    error::{Error, ErrorReporter, ExprNotAllowedReason, Span, Spanned, ToSpanned},
     mir::NumLiteralContent,
     token::NumValue,
-    utils::IdentStr,
+    utils::{fixme, IdentStr},
 };
 
 use super::{
@@ -26,6 +26,30 @@ macro panic_expr_error {
     () => {
         panic!("Expr::Error in MIR building stage")
     },
+}
+
+pub fn handle_top_level(
+    cx: &mut NamesContext,
+    stmt: Spanned<Expr>,
+    err_reporter: Rc<ErrorReporter>,
+) {
+    let (stmt, span) = stmt.into_pair();
+    dbg!(&stmt);
+    err_reporter.exit_if_has_error();
+    match stmt {
+        Expr::Decl(item) => make_mir_for_item(cx, item, err_reporter.clone()),
+        Expr::DeclList(items) => {
+            for item in items {
+                make_mir_for_item(cx, item, err_reporter.clone());
+            }
+        }
+        Expr::EmptyDecl(_) => todo!(),
+        _ => {
+            err_reporter.report(
+                &Error::ExprNotAllowed(ExprNotAllowedReason::InvalidTopLevelStmt).to_spanned(span),
+            );
+        }
+    }
 }
 
 pub fn make_mir_for_item(cx: &mut NamesContext, item: DeclItem, err_reporter: Rc<ErrorReporter>) {
@@ -159,6 +183,10 @@ impl<'cx> MirFuncBuilder<'cx> {
         if &value_ty.kind == &expect_ty.kind {
             return Some((value, value_ty));
         }
+        if value_ty.is_arr() || expect_ty.is_arr() {
+            todo!("arrays");
+        }
+        // Compile-time implicit cast for numeric types.
         if let &Value::Num(num) = &value {
             match &expect_ty.kind {
                 TyKind::Int(..) => {
@@ -197,16 +225,36 @@ impl<'cx> MirFuncBuilder<'cx> {
                     NumLiteralContent::U(..) | NumLiteralContent::I(..) => {
                         return Some((Value::Num(num), expect_ty));
                     }
-                    _ => self
-                        .err_reporter
-                        .report(&Error::MismatchedType(&expect_ty, &value_ty).to_spanned(span)),
+                    _ => (),
                 },
-                _ => self
-                    .err_reporter
-                    .report(&Error::MismatchedType(&expect_ty, &value_ty).to_spanned(span)),
+                _ => (),
             }
         }
-        todo!()
+        // We already checked earlier that expect_ty does not equal to value_ty.
+        if expect_ty.is_arithmatic_or_ptr() && value_ty.is_arithmatic_or_ptr() {
+            let var_id = self.declare_var(expect_ty.clone(), None, true)?;
+            // If both are pointers, ignore `const`/`volatile`/`restrict` of the pointer.
+            if let (TyKind::Ptr(_, lhs_ty), TyKind::Ptr(_, rhs_ty)) =
+                (&expect_ty.kind, &value_ty.kind)
+            {
+                // Assigning `T *` to `const T *` is a warning, smh.
+                if !lhs_ty.is_const && rhs_ty.is_const {
+                    fixme!("Warning for using const pointer as non-const pointer");
+                }
+                return Some((value, expect_ty));
+            }
+            self.add_inst(MirInst::Tycast(
+                var_id.into(),
+                expect_ty.clone(),
+                value_ty,
+                value,
+            ));
+            Some((Value::CopyPlace(var_id.into()), expect_ty))
+        } else {
+            self.err_reporter
+                .report(&Error::MismatchedType(&expect_ty, &value_ty).to_spanned(span));
+            None
+        }
     }
     fn build_num_literal(&self, num: NumValue, span: Span) -> Option<(NumLiteralContent, Ty)> {
         match num {
@@ -304,11 +352,17 @@ impl<'cx> MirFuncBuilder<'cx> {
                 let var_id = self.declare_var(ty.into_inner(), Some(name), false)?;
                 if let Some(rhs) = rhs {
                     // Have to manually re-write part of `build_assign` here because partial borrow.
-                    let place = Place::just_var(var_id).to_spanned(name.span());
+                    let place = Place::from(var_id).to_spanned(name.span());
                     let rhs_span = rhs.span();
                     let rhs = self.build_expr(rhs.into_unboxed())?;
                     let lhs_ty = self.mir_func.vars[var_id].ty.clone();
-                    let (value, _) = self.use_value(lhs_ty, rhs, rhs_span)?;
+                    let value = if !lhs_ty.is_void() {
+                        self.use_value(lhs_ty, rhs, rhs_span)?.0
+                    } else {
+                        self.err_reporter
+                            .report(&Error::TypedefWithRhs.to_spanned(span));
+                        Value::Void
+                    };
                     self.add_inst(MirInst::Assign(place.into_inner(), value));
                 }
                 Some(())
@@ -317,8 +371,9 @@ impl<'cx> MirFuncBuilder<'cx> {
                 todo!("static/extern variables")
             }
             DeclItem::Func(..) => {
-                self.err_reporter
-                    .report(&Error::ExprNotAllowed.to_spanned(span));
+                self.err_reporter.report(
+                    &Error::ExprNotAllowed(ExprNotAllowedReason::NestedFunc).to_spanned(span),
+                );
                 None
             }
         }
@@ -359,15 +414,8 @@ impl<'cx> MirFuncBuilder<'cx> {
                     }
                     _ => {
                         let var_id = self.declare_var(sig.ret_ty.inner().clone(), None, true)?;
-                        self.add_inst(MirInst::CallStatic(
-                            Some(Place::just_var(var_id)),
-                            ident,
-                            arg_vals,
-                        ));
-                        Some((
-                            Value::CopyPlace(Place::just_var(var_id)),
-                            sig.ret_ty.into_inner(),
-                        ))
+                        self.add_inst(MirInst::CallStatic(Some(var_id.into()), ident, arg_vals));
+                        Some((Value::CopyPlace(var_id.into()), sig.ret_ty.into_inner()))
                     }
                 }
             }
@@ -422,8 +470,9 @@ impl<'cx> MirFuncBuilder<'cx> {
             | Expr::Decl(..)
             | Expr::DeclList(..)
             | Expr::EmptyDecl(..) => {
-                self.err_reporter
-                    .report(&Error::ExprNotAllowed.to_spanned(span));
+                self.err_reporter.report(
+                    &Error::ExprNotAllowed(ExprNotAllowedReason::StmtAsExpr).to_spanned(span),
+                );
                 None
             }
         }
@@ -500,10 +549,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                         .report(&Error::VarDoesNotExist(name).to_spanned(span));
                     return None;
                 };
-                Some((
-                    Place::just_var(var_id),
-                    self.mir_func.vars[var_id].ty.clone(),
-                ))
+                Some((var_id.into(), self.mir_func.vars[var_id].ty.clone()))
             }
             Expr::PrefixOp(PrefixOpKind::Deref, _) => todo!(),
             Expr::Subscript(_, _) => todo!(),

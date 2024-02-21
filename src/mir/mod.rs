@@ -121,6 +121,8 @@ pub enum MirInst {
     Assign(Place, Value),
     /// TODO
     BitfieldAssign(std::convert::Infallible),
+    /// (place, source_ty, target_ty, value)
+    Tycast(Place, Ty, Ty, Value),
     /// Unary operator operation.
     /// Not including inc/dec operations, those are elaborated into another instruction.
     UnOp(Place, UnOpKind, Value),
@@ -201,12 +203,10 @@ pub struct Place {
     /// Note that they are stored in reverse of their actual order due to the way it's parsed.
     pub(self) projections: Vec<PlaceProjection>,
 }
-
-impl Place {
-    /// Create a place with no projections.
-    pub const fn just_var(root: VarId) -> Self {
+impl From<VarId> for Place {
+    fn from(value: VarId) -> Self {
         Self {
-            root,
+            root: value,
             projections: Vec::new(),
         }
     }
@@ -344,6 +344,7 @@ impl Debug for Place {
 impl Debug for MirInst {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Tycast(lhs, target_ty, source_ty, val) => write!(f, "{lhs:?} = ({source_ty:?} -> {target_ty:?}) {val:?}"),
             Self::Assign(lhs, rhs) => write!(f, "{lhs:?} = {rhs:?}"),
             Self::BitfieldAssign(..) => write!(f, "TODO(bitfield assign)"),
             Self::UnOp(place, op, oper) => write!(f, "{place:?} = {op} {oper:?}"),

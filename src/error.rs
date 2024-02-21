@@ -16,6 +16,14 @@ use crate::{
 
 pub type CowStr = Cow<'static, str>;
 
+#[derive(Clone, Copy, Debug)]
+pub enum ExprNotAllowedReason {
+    InvalidTopLevelStmt,
+    NestedFunc,
+    StmtAsExpr,
+    NoReason,
+}
+
 #[derive(Clone, Debug)]
 pub enum Error<'a> {
     Todo(&'a str),
@@ -59,7 +67,7 @@ pub enum Error<'a> {
     ExprNoAssignable,
     VarDoesNotExist(IdentStr),
     OutOfRangeNumber(i128),
-    ExprNotAllowed,
+    ExprNotAllowed(ExprNotAllowedReason),
     RedefinitionOfVar(IdentStr),
     NonNumericInUnary,
     TypedefWithRhs,

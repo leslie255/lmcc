@@ -2,10 +2,7 @@
 
 use std::{mem::MaybeUninit, sync::Mutex};
 
-use ast::Expr;
-use error::{Error, ToSpanned};
 use intern_str::{InternStr, MaybeOwnedStr, StringArena};
-use mir::make_mir_for_item;
 use parser::Parser;
 
 use crate::{error::ErrorReporter, file_reader::FileReader, mir::NamesContext, token::TokenStream};
@@ -54,22 +51,8 @@ fn main() {
     err_reporter.exit_if_has_error();
 
     let mut global_cx = NamesContext::default();
-    for expr in ast_parser {
-        let (expr, span) = expr.into_pair();
-        dbg!(&expr);
-        err_reporter.exit_if_has_error();
-        match expr {
-            Expr::Decl(item) => make_mir_for_item(&mut global_cx, item, err_reporter.clone()),
-            Expr::DeclList(items) => {
-                for item in items {
-                    make_mir_for_item(&mut global_cx, item, err_reporter.clone());
-                }
-            }
-            Expr::EmptyDecl(_) => todo!(),
-            _ => {
-                err_reporter.report(&Error::ExprNotAllowed.to_spanned(span));
-            }
-        }
+    for stmt in ast_parser {
+        mir::handle_top_level(&mut global_cx, stmt, err_reporter.clone());
     }
 
     dbg!(global_cx);

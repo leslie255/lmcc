@@ -1,10 +1,7 @@
 void f(unsigned int);
 
-int g(int);
-
 int main() {
-    f(-255.0);
-    g(0);
+    int x = 10;
+    f(x);
     return 0;
-    f(-10);
 }

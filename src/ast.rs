@@ -143,6 +143,15 @@ impl Ty_ {
             typename: None,
         })
     }
+    pub const fn is_void(&self) -> bool {
+        matches!(&self.kind, TyKind::Void)
+    }
+    pub const fn is_arithmatic_or_ptr(&self) -> bool {
+        match &self.kind {
+            TyKind::Int(..) | TyKind::Float(..) | TyKind::Bool | TyKind::Ptr(..) => true,
+            _ => false,
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Restrictness {

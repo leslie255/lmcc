@@ -11,10 +11,7 @@ use std::{
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
-    file_reader::FileReader,
-    source_string::SourceIdx,
-    token::Token,
-    utils::{derive_display_from_debug, fixme, IdentStr},
+    ast::Ty, file_reader::FileReader, source_string::SourceIdx, token::Token, utils::{derive_display_from_debug, fixme, IdentStr}
 };
 
 pub type CowStr = Cow<'static, str>;
@@ -68,6 +65,7 @@ pub enum Error<'a> {
     TypedefWithRhs,
     FuncDoesNotExist(IdentStr),
     MismatchedArgCount(usize, usize),
+    MismatchedType(&'a Ty, &'a Ty),
 }
 
 impl Error<'_> {

@@ -551,16 +551,13 @@ impl Parser {
             ensure_no!(signness);
             ensure_no!(struct_, ConflictingTypeSpecifier);
             ensure_no!(union_, ConflictingTypeSpecifier);
-            let ty = self
-                .ty_of_typename(*typename)
-                .cloned()
-                .unwrap_or(Ty::error());
-            return Ty {
+            let ty = self.ty_of_typename(*typename).unwrap();
+            return Rc::new(Ty_ {
                 is_const: ty.is_const | decl_speci.const_.is_some(),
                 is_volatile: ty.is_volatile | decl_speci.volatile.is_some(),
-                kind: ty.kind,
+                kind: ty.kind.clone(),
                 typename: Some(*typename),
-            }
+            })
             .to_spanned(decl_speci.span());
         } else if let Some(struct_) = &decl_speci.struct_ {
             ensure_no!(signness);
@@ -602,7 +599,7 @@ impl Parser {
                     match token.inner() {
                         Token::BracketClose => {
                             self.tokens.next();
-                            ty = TyKind::Ptr(Restrictness::NoRestrict, Box::new(ty.into_inner()))
+                            ty = TyKind::Ptr(Restrictness::NoRestrict, ty.into_inner())
                                 .to_ty(false, false, None)
                                 .to_spanned(span);
                         }
@@ -612,14 +609,14 @@ impl Parser {
                             let closing_bracket_span =
                                 expect_token!(self, Token::BracketClose, span);
                             if let Ok(i) = u64::try_from(i) {
-                                ty = TyKind::FixedArr(Box::new(ty.into_inner()), i)
+                                ty = TyKind::FixedArr(ty.into_inner(), i)
                                     .to_ty(false, false, None)
                                     .to_spanned(prev_ty_span.join(closing_bracket_span));
                             } else {
                                 self.err_reporter
                                     .report(&Error::IllegalArrLen.to_spanned(span));
-                                ty =
-                                    Ty::error().to_spanned(prev_ty_span.join(closing_bracket_span));
+                                ty = Ty_::error()
+                                    .to_spanned(prev_ty_span.join(closing_bracket_span));
                             }
                         }
                         Token::NumLiteral(NumValue::F(_)) => {
@@ -628,7 +625,7 @@ impl Parser {
                                 expect_token!(self, Token::BracketClose, span);
                             self.err_reporter
                                 .report(&Error::IllegalArrLen.to_spanned(span));
-                            ty = Ty::error().to_spanned(prev_ty_span.join(closing_bracket_span));
+                            ty = Ty_::error().to_spanned(prev_ty_span.join(closing_bracket_span));
                         }
                         _ => {
                             self.err_reporter
@@ -637,7 +634,7 @@ impl Parser {
                             let prev_ty_span = ty.span();
                             let closing_bracket_span =
                                 expect_token!(self, Token::BracketClose, span);
-                            ty = Ty::error().to_spanned(prev_ty_span.join(closing_bracket_span));
+                            ty = Ty_::error().to_spanned(prev_ty_span.join(closing_bracket_span));
                             break;
                         }
                     }
@@ -692,7 +689,7 @@ impl Parser {
                         } else {
                             Restrictness::NoRestrict
                         },
-                        Box::new(ty.into_inner()),
+                        ty.into_inner(),
                     )
                     .to_ty(const_.is_some(), volatile.is_some(), None)
                     .to_spanned(span);

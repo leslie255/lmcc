@@ -131,10 +131,10 @@ pub enum MirInst {
     /// - assignments (one of the operand is a place not a value).
     /// - member-accessing (see `Place`).
     BinOp(Place, Value, BinOpKind, Value),
-    /// Call a function statically, store it into a variable if result isn't `void`.
-    CallStatic(Option<VarId>, IdentStr, Vec<Value>),
-    /// Call a function dynamically, store it into a variable if result isn't `void`.
-    CallDynamic(Option<VarId>, Value, Vec<Value>),
+    /// Call a function statically, store it into a place if result isn't `void`.
+    CallStatic(Option<Place>, IdentStr, Vec<Value>),
+    /// Call a function dynamically, store it into a place if result isn't `void`.
+    CallDynamic(Option<Place>, Value, Vec<Value>),
     /// Block terminator.
     Term(MirTerm),
 }
@@ -196,10 +196,10 @@ pub struct VarInfo {
 #[derive(Clone, PartialEq)]
 pub struct Place {
     /// See `Place`.
-    root: VarId,
+    pub(self) root: VarId,
     /// See `Place`.
     /// Note that they are stored in reverse of their actual order due to the way it's parsed.
-    projections: Vec<PlaceProjection>,
+    pub(self) projections: Vec<PlaceProjection>,
 }
 
 impl Place {
@@ -234,7 +234,7 @@ pub enum Value {
     Void,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum NumLiteralContent {
     U(u64),
     I(i64),

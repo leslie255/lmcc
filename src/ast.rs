@@ -81,8 +81,8 @@ pub enum TyKind {
     Int(Signness, IntSize),
     Float(FloatSize),
     Bool,
-    Ptr(Restrictness, Box<Ty>),
-    FixedArr(Box<Ty>, u64),
+    Ptr(Restrictness, Ty),
+    FixedArr(Ty, u64),
     Struct(Option<IdentStr>, Option<StructFields>),
     Union(Option<IdentStr>, Option<StructFields>),
     Enum(Option<IdentStr>, Option<EnumFields>),
@@ -93,54 +93,55 @@ pub type StructFields = Vec<(Ty, IdentStr)>;
 pub type EnumFields = Vec<(IdentStr, Option<ChildExpr>)>;
 impl TyKind {
     pub fn to_ty(self, is_const: bool, is_volatile: bool, typename: Option<IdentStr>) -> Ty {
-        Ty {
+        Rc::new(Ty_ {
             kind: self,
             is_const,
             is_volatile,
             typename,
-        }
+        })
     }
 }
+pub type Ty = Rc<Ty_>;
 #[derive(Clone, PartialEq)]
-pub struct Ty {
+pub struct Ty_ {
     pub is_const: bool,
     pub is_volatile: bool,
     pub kind: TyKind,
     /// Is this type expressed as a typename?
     pub typename: Option<IdentStr>,
 }
-impl Ty {
+impl Ty_ {
     pub fn is_arr(&self) -> bool {
         matches!(self.kind, TyKind::FixedArr(..))
     }
-    pub fn decayed(self) -> Self {
-        match self.kind {
-            TyKind::FixedArr(ty, _) => Self {
-                kind: TyKind::Ptr(Restrictness::NoRestrict, ty),
+    pub fn decayed(self: Ty) -> Ty {
+        match &self.kind {
+            TyKind::FixedArr(ty, _) => Rc::new(Self {
+                kind: TyKind::Ptr(Restrictness::NoRestrict, ty.clone()),
                 is_const: self.is_const,
                 is_volatile: self.is_volatile,
                 typename: self.typename,
-            },
+            }),
             _ => self,
         }
     }
     /// Shorthand for making an `ERROR` (not `const`, not `volatile`, no typename) type.
-    pub const fn error() -> Self {
-        Self {
+    pub fn error() -> Ty {
+        Rc::new(Self {
             is_const: false,
             is_volatile: false,
             kind: TyKind::Error,
             typename: None,
-        }
+        })
     }
     /// Shorthand for making a `void` (not `const`, not `volatile`, no typename) type.
-    pub const fn void() -> Self {
-        Self {
+    pub fn void() -> Ty {
+        Rc::new(Self {
             is_const: false,
             is_volatile: false,
             kind: TyKind::Void,
             typename: None,
-        }
+        })
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -430,7 +431,7 @@ impl Debug for FuncSpecifier {
     }
 }
 
-impl Debug for Ty {
+impl Debug for Ty_ {
     fn fmt(&self, mut f: &mut fmt::Formatter<'_>) -> fmt::Result {
         macro const_() {
             if self.is_const {

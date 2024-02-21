@@ -4,8 +4,7 @@ use index_vec::{index_vec, IndexVec};
 
 use crate::{
     ast::{
-        DeclItem, Expr, FloatSize, InfixOpKind, IntSize, PrefixOpKind, Signature, Signness, Ty,
-        TyKind, VarSpecifier,
+        DeclItem, Expr, FloatSize, InfixOpKind, IntSize, PrefixOpKind, Signature, Signness, Ty, TyKind, Ty_, VarSpecifier
     },
     error::{Error, ErrorReporter, Span, Spanned, ToSpanned},
     mir::NumLiteralContent,
@@ -149,6 +148,28 @@ impl<'cx> MirFuncBuilder<'cx> {
         }
         Some(var_id)
     }
+    /// If types are unequal, elaborates typecast or report error.
+    fn use_value(
+        &mut self,
+        expect_ty: Ty,
+        (value, value_ty): (Value, Ty),
+        span: Span,
+    ) -> Option<(Value, Ty)> {
+        if &value_ty.kind == &expect_ty.kind {
+            return Some((value, value_ty));
+        }
+        if let &Value::Num(num) = &value {
+            match &expect_ty.kind {
+                TyKind::Int(..) | TyKind::Float(..) | TyKind::Bool | TyKind::Ptr(..) => {
+                    return Some((Value::Num(num), expect_ty))
+                }
+                _ => self
+                    .err_reporter
+                    .report(&Error::MismatchedType(&expect_ty, &value_ty).to_spanned(span)),
+            }
+        }
+        todo!()
+    }
     fn build_num_literal(&self, num: NumValue, span: Span) -> Option<(NumLiteralContent, Ty)> {
         match num {
             crate::token::NumValue::I(i) => {
@@ -246,13 +267,10 @@ impl<'cx> MirFuncBuilder<'cx> {
                 if let Some(rhs) = rhs {
                     // Have to manually re-write part of `build_assign` here because partial borrow.
                     let place = Place::just_var(var_id).to_spanned(name.span());
-                    let (value, rhs_ty) = self.build_expr(rhs.into_unboxed())?;
-                    let lhs_ty = &self.mir_func.vars[var_id].ty;
-                    if lhs_ty.kind != rhs_ty.kind {
-                        todo!(
-                            "Auto type casting & type checking (lhs: {lhs_ty:?}, rhs: {rhs_ty:?})"
-                        );
-                    }
+                    let rhs_span = rhs.span();
+                    let rhs = self.build_expr(rhs.into_unboxed())?;
+                    let lhs_ty = self.mir_func.vars[var_id].ty.clone();
+                    let (value, _) = self.use_value(lhs_ty, rhs, rhs_span)?;
                     self.add_inst(MirInst::Assign(place.into_inner(), value));
                 }
                 Some(())
@@ -304,11 +322,15 @@ impl<'cx> MirFuncBuilder<'cx> {
                 match &sig.ret_ty.kind {
                     TyKind::Void => {
                         self.add_inst(MirInst::CallStatic(None, ident, arg_vals));
-                        Some((Value::Void, Ty::void()))
+                        Some((Value::Void, Ty_::void()))
                     }
                     _ => {
                         let var_id = self.declare_var(sig.ret_ty.inner().clone(), None, true)?;
-                        self.add_inst(MirInst::CallStatic(Some(var_id), ident, arg_vals));
+                        self.add_inst(MirInst::CallStatic(
+                            Some(Place::just_var(var_id)),
+                            ident,
+                            arg_vals,
+                        ));
                         Some((
                             Value::CopyPlace(Place::just_var(var_id)),
                             sig.ret_ty.into_inner(),
@@ -377,11 +399,9 @@ impl<'cx> MirFuncBuilder<'cx> {
         let lhs_span = lhs.span();
         let (place, lhs_ty) = self.build_place(lhs)?;
         let place = place.to_spanned(lhs_span);
-        let lhs_ty = lhs_ty;
-        let (value, rhs_ty) = self.build_expr(rhs)?;
-        if lhs_ty.kind != rhs_ty.kind {
-            todo!("Auto type casting & type checking (lhs: {lhs_ty:?}, rhs: {rhs_ty:?})");
-        }
+        let rhs_span = rhs.span();
+        let rhs = self.build_expr(rhs)?;
+        let (value, _) = self.use_value(lhs_ty, rhs, rhs_span)?;
         self.add_inst(MirInst::Assign(place.into_inner(), value));
         Some(())
     }
@@ -411,11 +431,9 @@ impl<'cx> MirFuncBuilder<'cx> {
                 self.add_inst(MirInst::Term(MirTerm::Return(Value::Void)));
             }
             Expr::Return(Some(expr)) => {
-                let (value, ty) = self.build_expr(expr.into_unboxed())?;
-                let expect_ty = &self.mir_func.ret;
-                if ty.kind != expect_ty.kind {
-                    todo!("auto typecast / typecast");
-                }
+                let value = self.build_expr(expr.into_unboxed())?;
+                let expect_ty = self.mir_func.ret.clone();
+                let (value, _) = self.use_value(expect_ty, value, span)?;
                 self.add_inst(MirInst::Term(MirTerm::Return(value)));
             }
             Expr::Labal(_) => todo!(),

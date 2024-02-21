@@ -241,7 +241,6 @@ impl<'cx> MirFuncBuilder<'cx> {
                 if !lhs_ty.is_const && rhs_ty.is_const {
                     fixme!("Warning for using const pointer as non-const pointer");
                 }
-                return Some((value, expect_ty));
             }
             self.add_inst(MirInst::Tycast(
                 var_id.into(),

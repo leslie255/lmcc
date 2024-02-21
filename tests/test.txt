@@ -2,7 +2,7 @@ void f(unsigned int);
 
 int main() {
     int x = 10;
-    int *p = &x;
+    unsigned int *p = &x;
     *p = 20;
     return 0;
 }

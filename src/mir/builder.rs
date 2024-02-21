@@ -4,8 +4,8 @@ use index_vec::{index_vec, IndexVec};
 
 use crate::{
     ast::{
-        DeclItem, Expr, FloatSize, InfixOpKind, IntSize, PrefixOpKind, Signature, Signness, Ty,
-        TyKind, Ty_, VarSpecifier,
+        DeclItem, Expr, FloatSize, InfixOpKind, IntSize, PrefixOpKind, Restrictness, Signature,
+        Signness, Ty, TyKind, Ty_, VarSpecifier,
     },
     error::{Error, ErrorReporter, ExprNotAllowedReason, Span, Spanned, ToSpanned},
     mir::NumLiteralContent,
@@ -14,8 +14,8 @@ use crate::{
 };
 
 use super::{
-    BlockId, FuncData, MirBlock, MirFunction, MirInst, MirTerm, NamesContext, Place, Value, VarId,
-    VarInfo,
+    BlockId, FuncData, MirBlock, MirFunction, MirInst, MirTerm, NamesContext, Place,
+    PlaceProjection, Value, VarId, VarInfo,
 };
 
 /// `Expr::Error` should not occur in this stage of the compilation.
@@ -356,13 +356,12 @@ impl<'cx> MirFuncBuilder<'cx> {
                     let rhs_span = rhs.span();
                     let rhs = self.build_expr(rhs.into_unboxed())?;
                     let lhs_ty = self.mir_func.vars[var_id].ty.clone();
-                    let value = if !lhs_ty.is_void() {
-                        self.use_value(lhs_ty, rhs, rhs_span)?.0
-                    } else {
+                    if lhs_ty.is_void() || lhs_ty.is_const {
                         self.err_reporter
-                            .report(&Error::TypedefWithRhs.to_spanned(span));
-                        Value::Void
-                    };
+                            .report(&Error::ExprNoAssignable.to_spanned(span));
+                        return None;
+                    }
+                    let value = self.use_value(lhs_ty, rhs, rhs_span)?.0;
                     self.add_inst(MirInst::Assign(place.into_inner(), value));
                 }
                 Some(())
@@ -426,7 +425,10 @@ impl<'cx> MirFuncBuilder<'cx> {
         let (expr, span) = expr.into_pair();
         match expr {
             Expr::Error => panic_expr_error!(span),
-            Expr::Ident(..) | Expr::PrefixOp(PrefixOpKind::Deref, _) => {
+            Expr::Ident(..)
+            | Expr::PrefixOp(PrefixOpKind::Deref, _)
+            | Expr::Subscript(..)
+            | Expr::FieldPath(..) => {
                 let (place, ty) = self.build_place(expr.to_spanned(span))?;
                 Some((Value::CopyPlace(place), ty))
             }
@@ -445,14 +447,17 @@ impl<'cx> MirFuncBuilder<'cx> {
             Expr::PrefixOp(PrefixOpKind::UnaryAdd, expr) => {
                 self.build_unary_add(expr.into_unboxed())
             }
+            Expr::PrefixOp(PrefixOpKind::Ref, expr) => {
+                let (place, ty) = self.build_place(expr.into_unboxed())?;
+                let ty = TyKind::Ptr(Restrictness::NoRestrict, ty).to_ty(true, false, None);
+                Some((Value::RefPlace(place), ty))
+            }
             Expr::PrefixOp(_, _) => todo!(),
             Expr::PostfixOp(_, _) => todo!(),
             Expr::InfixOp(_, _, _) => todo!(),
             Expr::OpAssign(_, _, _) => todo!(),
             Expr::Typecast(_, _) => todo!(),
             Expr::Call(callee, args) => self.build_call(callee.into_unboxed(), args),
-            Expr::Subscript(_, _) => todo!(),
-            Expr::FieldPath(_, _) => todo!(),
             Expr::List(_) => todo!(),
             Expr::Tenary(_, _, _) => todo!(),
             Expr::Return(..)
@@ -540,24 +545,44 @@ impl<'cx> MirFuncBuilder<'cx> {
     }
 
     pub fn build_place(&mut self, expr: Spanned<Expr>) -> Option<(Place, Ty)> {
-        let (expr, span) = expr.into_pair();
-        match expr {
-            Expr::Error => panic_expr_error!(span),
-            Expr::Ident(name) => {
-                let Some(&var_id) = self.cx.locals.var(name) else {
+        let (mut expr, span) = expr.into_pair();
+        let mut projs = Vec::<PlaceProjection>::new();
+        loop {
+            match expr {
+                Expr::Error => panic_expr_error!(span),
+                Expr::Ident(name) => {
+                    let Some(&var_id) = self.cx.locals.var(name) else {
+                        self.err_reporter
+                            .report(&Error::VarDoesNotExist(name).to_spanned(span));
+                        return None;
+                    };
+                    let mut ty = self.mir_func.vars[var_id].ty.as_ref();
+                    for proj in projs.iter().rev() {
+                        match (proj, &ty.kind) {
+                            (PlaceProjection::Deref, TyKind::Ptr(_, inner)) => {
+                                ty = inner;
+                            }
+                            (PlaceProjection::Deref, _) => {
+                                todo!()
+                            }
+                            (PlaceProjection::FieldDir(_), _) => todo!(),
+                            (PlaceProjection::FieldInd(_), _) => todo!(),
+                            (PlaceProjection::Index(_), _) => todo!(),
+                        }
+                    }
+                    return Some((var_id.into(), Rc::new(ty.clone())));
+                }
+                Expr::PrefixOp(PrefixOpKind::Deref, inner) => {
+                    projs.push(PlaceProjection::Deref);
+                    expr = *inner.into_inner();
+                }
+                Expr::Subscript(_, _) => todo!(),
+                Expr::FieldPath(_, _) => todo!(),
+                _ => {
                     self.err_reporter
-                        .report(&Error::VarDoesNotExist(name).to_spanned(span));
+                        .report(&Error::ExprNoAssignable.to_spanned(span));
                     return None;
-                };
-                Some((var_id.into(), self.mir_func.vars[var_id].ty.clone()))
-            }
-            Expr::PrefixOp(PrefixOpKind::Deref, _) => todo!(),
-            Expr::Subscript(_, _) => todo!(),
-            Expr::FieldPath(_, _) => todo!(),
-            _ => {
-                self.err_reporter
-                    .report(&Error::ExprNoAssignable.to_spanned(span));
-                None
+                }
             }
         }
     }

@@ -4,13 +4,13 @@ use index_vec::{index_vec, IndexVec};
 
 use crate::{
     ast::{
-        DeclItem, Expr, FloatSize, InfixOpKind, IntSize, PrefixOpKind, Restrictness, Signature,
-        Signness, Ty, TyKind, Ty_, VarSpecifier,
+        AssignOpKind, DeclItem, Expr, FloatSize, InfixOpKind, IntSize, PrefixOpKind, Restrictness,
+        Signature, Signness, Ty, TyKind, Ty_, VarSpecifier,
     },
     error::{Error, ErrorReporter, ExprNotAllowedReason, Span, Spanned, ToSpanned},
     mir::{BinOpKind, NumLiteralContent},
     token::NumValue,
-    utils::{fixme, IdentStr},
+    utils::IdentStr,
 };
 
 use super::{
@@ -67,7 +67,7 @@ pub fn make_mir_for_item(cx: &mut NamesContext, item: DeclItem, err_reporter: Rc
                 cx.locals.enters_block();
                 let mut func_builder = MirFuncBuilder::new(cx, err_reporter, *name, sig);
                 for stmt in body {
-                    func_builder.build_stmt(stmt);
+                    func_builder.build_stmt(stmt.as_ref());
                 }
                 cx.funcs.get_mut(&name).unwrap().mir_func = Some(func_builder.mir_func);
                 cx.locals.leaves_block();
@@ -233,6 +233,62 @@ impl<'cx> MirFuncBuilder<'cx> {
         }
         Some(var_id)
     }
+    fn use_num(
+        &mut self,
+        expect_ty: Ty,
+        (num, num_ty): (NumLiteralContent, Ty),
+        span: Span,
+    ) -> Option<(Value, Ty)> {
+        match &expect_ty.kind {
+            TyKind::Int(..) => {
+                let num = match num {
+                    NumLiteralContent::U(..) | NumLiteralContent::I(..) => Value::Num(num),
+                    NumLiteralContent::F(f) if f.is_sign_positive() => {
+                        let u = f.round() as u64;
+                        Value::Num(u.into())
+                    }
+                    NumLiteralContent::F(f) if f.is_sign_negative() => {
+                        let i = f.round() as i64;
+                        Value::Num(i.into())
+                    }
+                    _ => unreachable!(),
+                };
+                Some((num, expect_ty))
+            }
+            TyKind::Bool => {
+                let is_true = match num {
+                    NumLiteralContent::U(u) => u != 0,
+                    NumLiteralContent::I(i) => i != 0,
+                    NumLiteralContent::F(f) => f != 0.0,
+                };
+                let num: u64 = if is_true { 1 } else { 0 };
+                Some((Value::Num(num.into()), expect_ty))
+            }
+            TyKind::Float(..) => {
+                let num = match num {
+                    NumLiteralContent::U(u) => Value::Num((u as f64).into()),
+                    NumLiteralContent::I(i) => Value::Num((i as f64).into()),
+                    f @ NumLiteralContent::F(..) => Value::Num(f),
+                };
+                Some((num, expect_ty))
+            }
+            TyKind::Ptr(..) => match num {
+                NumLiteralContent::U(..) | NumLiteralContent::I(..) => {
+                    Some((Value::Num(num), expect_ty))
+                }
+                _ => {
+                    self.err_reporter
+                        .report(&Error::MismatchedType(&expect_ty, &num_ty).to_spanned(span));
+                    None
+                }
+            },
+            _ => {
+                self.err_reporter
+                    .report(&Error::MismatchedType(&expect_ty, &num_ty).to_spanned(span));
+                None
+            }
+        }
+    }
     /// If types are unequal, elaborates typecast or report error.
     fn use_value(
         &mut self,
@@ -240,7 +296,7 @@ impl<'cx> MirFuncBuilder<'cx> {
         (value, value_ty): (Value, Ty),
         span: Span,
     ) -> Option<(Value, Ty)> {
-        if &value_ty.kind == &expect_ty.kind {
+        if value_ty.kind_eq(&expect_ty) {
             return Some((value, value_ty));
         }
         if value_ty.is_arr() || expect_ty.is_arr() {
@@ -248,60 +304,11 @@ impl<'cx> MirFuncBuilder<'cx> {
         }
         // Compile-time implicit cast for numeric types.
         if let &Value::Num(num) = &value {
-            match &expect_ty.kind {
-                TyKind::Int(..) => {
-                    let num = match num {
-                        NumLiteralContent::U(..) | NumLiteralContent::I(..) => Value::Num(num),
-                        NumLiteralContent::F(f) if f.is_sign_positive() => {
-                            let u = f.round() as u64;
-                            Value::Num(u.into())
-                        }
-                        NumLiteralContent::F(f) if f.is_sign_negative() => {
-                            let i = f.round() as i64;
-                            Value::Num(i.into())
-                        }
-                        _ => unreachable!(),
-                    };
-                    return Some((num, expect_ty));
-                }
-                TyKind::Bool => {
-                    let is_true = match num {
-                        NumLiteralContent::U(u) => u != 0,
-                        NumLiteralContent::I(i) => i != 0,
-                        NumLiteralContent::F(f) => f != 0.0,
-                    };
-                    let num: u64 = if is_true { 1 } else { 0 };
-                    return Some((Value::Num(num.into()), expect_ty));
-                }
-                TyKind::Float(..) => {
-                    let num = match num {
-                        NumLiteralContent::U(u) => Value::Num((u as f64).into()),
-                        NumLiteralContent::I(i) => Value::Num((i as f64).into()),
-                        f @ NumLiteralContent::F(..) => Value::Num(f),
-                    };
-                    return Some((num, expect_ty));
-                }
-                TyKind::Ptr(..) => match num {
-                    NumLiteralContent::U(..) | NumLiteralContent::I(..) => {
-                        return Some((Value::Num(num), expect_ty));
-                    }
-                    _ => (),
-                },
-                _ => (),
-            }
+            return self.use_num(expect_ty, (num, value_ty), span);
         }
         // We already checked earlier that expect_ty does not equal to value_ty.
         if expect_ty.is_arithmatic_or_ptr() && value_ty.is_arithmatic_or_ptr() {
             let var_id = self.declare_var(expect_ty.clone(), None, true)?;
-            // If both are pointers, ignore `const`/`volatile`/`restrict` of the pointer.
-            if let (TyKind::Ptr(_, lhs_ty), TyKind::Ptr(_, rhs_ty)) =
-                (&expect_ty.kind, &value_ty.kind)
-            {
-                // Assigning `T *` to `const T *` is a warning, smh.
-                if !lhs_ty.is_const && rhs_ty.is_const {
-                    fixme!("Warning for using const pointer as non-const pointer");
-                }
-            }
             self.add_inst(MirInst::Tycast(
                 var_id.into(),
                 expect_ty.clone(),
@@ -317,7 +324,7 @@ impl<'cx> MirFuncBuilder<'cx> {
     }
     fn build_num_literal(&self, num: NumValue, span: Span) -> Option<(NumLiteralContent, Ty)> {
         match num {
-            crate::token::NumValue::I(i) => {
+            NumValue::I(i) => {
                 if let Ok(u) = u64::try_from(i) {
                     let size = if u32::try_from(u).is_ok() {
                         IntSize::_32
@@ -344,13 +351,13 @@ impl<'cx> MirFuncBuilder<'cx> {
                     None
                 }
             }
-            crate::token::NumValue::F(f) => Some((
+            NumValue::F(f) => Some((
                 NumLiteralContent::F(f),
                 TyKind::Float(FloatSize::_64).to_ty(true, false, None),
             )),
         }
     }
-    fn build_unary_add(&mut self, operand: Spanned<Expr>) -> Option<(Value, Ty)> {
+    fn build_unary_add(&mut self, operand: Spanned<&Expr>) -> Option<(Value, Ty)> {
         let span = operand.span();
         let (value, ty) = self.build_expr(operand)?;
         if !matches!(&ty.kind, TyKind::Int(..) | TyKind::Float(..) | TyKind::Bool) {
@@ -360,11 +367,11 @@ impl<'cx> MirFuncBuilder<'cx> {
         }
         Some((value, ty))
     }
-    fn build_unary_sub(&mut self, operand: Spanned<Expr>) -> Option<(Value, Ty)> {
+    fn build_unary_sub(&mut self, operand: Spanned<&Expr>) -> Option<(Value, Ty)> {
         let (operand, span) = operand.into_pair();
         match operand {
             Expr::Error => panic_expr_error!(span),
-            Expr::NumLiteral(num) => {
+            &Expr::NumLiteral(num) => {
                 let (num, mut ty) = self.build_num_literal(num, span)?;
                 let num = match num {
                     NumLiteralContent::U(u) => {
@@ -392,7 +399,7 @@ impl<'cx> MirFuncBuilder<'cx> {
             }
         }
     }
-    fn build_decl(&mut self, item: Spanned<DeclItem>) -> Option<()> {
+    fn build_decl(&mut self, item: Spanned<&DeclItem>) -> Option<()> {
         let (item, span) = item.into_pair();
         match item {
             DeclItem::Var(VarSpecifier::Typedef, _, _, None) => Some(()),
@@ -402,17 +409,17 @@ impl<'cx> MirFuncBuilder<'cx> {
                 None
             }
             // `register` storage specifier is ignored.
-            DeclItem::Var(
+            &DeclItem::Var(
                 VarSpecifier::Auto | VarSpecifier::Register | VarSpecifier::Unspecified,
-                ty,
+                ref ty,
                 name,
-                rhs,
+                ref rhs,
             ) => {
                 if let Some(rhs) = rhs {
                     // Have to manually re-write part of `build_assign` here because partial borrow.
                     let rhs_span = rhs.span();
-                    let rhs = self.build_expr(rhs.into_unboxed())?;
-                    let lhs_ty = ty.into_inner();
+                    let rhs = self.build_expr(rhs.as_deref())?;
+                    let lhs_ty = ty.inner().clone();
                     if lhs_ty.is_void() {
                         self.err_reporter
                             .report(&Error::IllegalVoidTy.to_spanned(span));
@@ -423,7 +430,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                     let place = Place::from(var_id).to_spanned(name.span());
                     self.add_inst(MirInst::Assign(place.into_inner(), value));
                 } else {
-                    self.declare_var(ty.into_inner(), Some(name), false)?;
+                    self.declare_var(ty.inner().clone(), Some(name), false)?;
                 }
                 Some(())
             }
@@ -440,13 +447,13 @@ impl<'cx> MirFuncBuilder<'cx> {
     }
     fn build_call(
         &mut self,
-        callee: Spanned<Expr>,
-        args: Spanned<Vec<Spanned<Expr>>>,
+        callee: Spanned<&Expr>,
+        args: Spanned<&[Spanned<Expr>]>,
     ) -> Option<(Value, Ty)> {
         let (callee, callee_span) = callee.into_pair();
         match callee {
             Expr::Error => panic_expr_error!(callee_span),
-            Expr::Ident(ident) => {
+            &Expr::Ident(ident) => {
                 let mut arg_vals = Vec::<Value>::with_capacity(args.len());
                 let Some(func_data) = self.cx.funcs.get(&ident) else {
                     self.err_reporter
@@ -463,7 +470,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                 let sig = sig.clone(); // TODO: optimize this clone away.
                 for (arg, (expect_ty, _)) in args.into_inner().into_iter().zip(&sig.args) {
                     let arg_span = arg.span();
-                    let arg = self.build_expr(arg)?;
+                    let arg = self.build_expr(arg.as_ref())?;
                     let (arg_val, _) = self.use_value(expect_ty.clone(), arg, arg_span)?;
                     arg_vals.push(arg_val);
                 }
@@ -482,7 +489,7 @@ impl<'cx> MirFuncBuilder<'cx> {
             _ => todo!("dynamic function calls"),
         }
     }
-    fn build_expr(&mut self, expr: Spanned<Expr>) -> Option<(Value, Ty)> {
+    fn build_expr(&mut self, expr: Spanned<&Expr>) -> Option<(Value, Ty)> {
         let (expr, span) = expr.into_pair();
         match expr {
             Expr::Error => panic_expr_error!(span),
@@ -493,72 +500,61 @@ impl<'cx> MirFuncBuilder<'cx> {
                 let (place, ty) = self.build_place(expr.to_spanned(span))?;
                 Some((Value::CopyPlace(place), ty))
             }
-            Expr::NumLiteral(num) => {
+            &Expr::NumLiteral(num) => {
                 let (num_literal, ty) = self.build_num_literal(num, span)?;
                 Some((Value::Num(num_literal), ty))
             }
-            Expr::CharLiteral(c) => Some((
+            &Expr::CharLiteral(c) => Some((
                 Value::Char(c),
                 TyKind::Int(Signness::Signed, IntSize::_8).to_ty(true, false, None),
             )),
             Expr::StrLiteral(_) => todo!(),
-            Expr::PrefixOp(PrefixOpKind::UnarySub, expr) => {
-                self.build_unary_sub(expr.into_unboxed())
-            }
-            Expr::PrefixOp(PrefixOpKind::UnaryAdd, expr) => {
-                self.build_unary_add(expr.into_unboxed())
-            }
+            Expr::PrefixOp(PrefixOpKind::UnarySub, expr) => self.build_unary_sub(expr.as_deref()),
+            Expr::PrefixOp(PrefixOpKind::UnaryAdd, expr) => self.build_unary_add(expr.as_deref()),
             Expr::PrefixOp(PrefixOpKind::Ref, expr) => {
-                let (place, ty) = self.build_place(expr.into_unboxed())?;
+                let (place, ty) = self.build_place(expr.as_deref())?;
                 let ty = TyKind::Ptr(Restrictness::NoRestrict, ty).to_ty(true, false, None);
                 Some((Value::RefPlace(place), ty))
             }
             Expr::PrefixOp(_, _) => todo!(),
             Expr::PostfixOp(_, _) => todo!(),
             Expr::InfixOp(_, InfixOpKind::Bsl | InfixOpKind::Bsr, _) => todo!(),
-            Expr::InfixOp(_, InfixOpKind::Comma, _) => todo!(),
-            Expr::InfixOp(
-                _,
-                InfixOpKind::Gt
-                | InfixOpKind::Ge
-                | InfixOpKind::Lt
-                | InfixOpKind::Le
-                | InfixOpKind::Eq
-                | InfixOpKind::Ne,
-                _,
-            ) => todo!(),
+            Expr::InfixOp(expr0, InfixOpKind::Comma, expr1) => {
+                self.build_expr(expr0.as_deref());
+                self.build_expr(expr1.as_deref())
+            }
             Expr::InfixOp(lhs, op, rhs) => {
                 let lhs_span = lhs.span();
                 let rhs_span = rhs.span();
-                let op = match op {
-                    InfixOpKind::Add => BinOpKind::Add,
-                    InfixOpKind::Sub => BinOpKind::Sub,
-                    InfixOpKind::Mul => BinOpKind::Mul,
-                    InfixOpKind::Div => BinOpKind::Div,
-                    InfixOpKind::Rem => BinOpKind::Rem,
-                    InfixOpKind::BitAnd => BinOpKind::BitAnd,
-                    InfixOpKind::BitOr => BinOpKind::BitOr,
-                    InfixOpKind::BitXor => BinOpKind::BitXor,
-                    InfixOpKind::And => BinOpKind::And,
-                    InfixOpKind::Or => BinOpKind::Or,
-                    InfixOpKind::Gt
-                    | InfixOpKind::Ge
-                    | InfixOpKind::Lt
-                    | InfixOpKind::Le
-                    | InfixOpKind::Eq
-                    | InfixOpKind::Ne
-                    | InfixOpKind::Comma
-                    | InfixOpKind::Bsl
-                    | InfixOpKind::Bsr => unreachable!(),
+                let (op, is_cmp) = match op {
+                    InfixOpKind::Add => (BinOpKind::Add, false),
+                    InfixOpKind::Sub => (BinOpKind::Sub, false),
+                    InfixOpKind::Mul => (BinOpKind::Mul, false),
+                    InfixOpKind::Div => (BinOpKind::Div, false),
+                    InfixOpKind::Rem => (BinOpKind::Rem, false),
+                    InfixOpKind::BitAnd => (BinOpKind::BitAnd, false),
+                    InfixOpKind::BitOr => (BinOpKind::BitOr, false),
+                    InfixOpKind::BitXor => (BinOpKind::BitXor, false),
+                    InfixOpKind::And => (BinOpKind::And, false),
+                    InfixOpKind::Or => (BinOpKind::Or, false),
+                    InfixOpKind::Gt => (BinOpKind::Gt, true),
+                    InfixOpKind::Ge => (BinOpKind::Ge, true),
+                    InfixOpKind::Lt => (BinOpKind::Lt, true),
+                    InfixOpKind::Le => (BinOpKind::Le, true),
+                    InfixOpKind::Eq => (BinOpKind::Eq, true),
+                    InfixOpKind::Ne => (BinOpKind::Ne, true),
+                    InfixOpKind::Comma | InfixOpKind::Bsl | InfixOpKind::Bsr => unreachable!(),
                 };
-                let (lhs_val, lhs_ty) = self.build_expr(lhs.into_unboxed())?;
-                let (rhs_val, rhs_ty) = self.build_expr(rhs.into_unboxed())?;
-                let Some(result_ty) = merge_tys(&lhs_ty, &rhs_ty) else {
-                    self.err_reporter.report(
-                        &Error::IncompatibleTyForArithmatics(&lhs_ty, &rhs_ty).to_spanned(span),
-                    );
+                let (lhs_val, lhs_ty) = self.build_expr(lhs.as_deref())?;
+                let (rhs_val, rhs_ty) = self.build_expr(rhs.as_deref())?;
+                let Some(mut result_ty) = merge_tys(&lhs_ty, &rhs_ty) else {
+                    self.err_reporter
+                        .report(&Error::IncompatibleTyForBinOp(&lhs_ty, &rhs_ty).to_spanned(span));
                     return None;
                 };
+                if is_cmp {
+                    result_ty = TyKind::Bool.to_ty(false, false, None);
+                }
                 let (lhs_val, _) =
                     self.use_value(result_ty.clone(), (lhs_val, lhs_ty), lhs_span)?;
                 let (rhs_val, _) =
@@ -567,9 +563,10 @@ impl<'cx> MirFuncBuilder<'cx> {
                 self.add_inst(MirInst::BinOp(var_id.into(), lhs_val, op, rhs_val));
                 Some((Value::CopyPlace(var_id.into()), result_ty))
             }
-            Expr::OpAssign(_, _, _) => todo!(),
-            Expr::Typecast(target_ty, expr) => self.build_typecast(target_ty, expr.into_unboxed()),
-            Expr::Call(callee, args) => self.build_call(callee.into_unboxed(), args),
+            Expr::Typecast(target_ty, expr) => {
+                self.build_typecast(target_ty.clone(), expr.as_deref())
+            }
+            Expr::Call(callee, args) => self.build_call(callee.as_deref(), args.as_deref()),
             Expr::List(_) => todo!(),
             Expr::Tenary(_, _, _) => todo!(),
             Expr::Return(..)
@@ -586,7 +583,8 @@ impl<'cx> MirFuncBuilder<'cx> {
             | Expr::If(..)
             | Expr::Decl(..)
             | Expr::DeclList(..)
-            | Expr::EmptyDecl(..) => {
+            | Expr::EmptyDecl(..)
+            | Expr::OpAssign(..) => {
                 self.err_reporter.report(
                     &Error::ExprNotAllowed(ExprNotAllowedReason::StmtAsExpr).to_spanned(span),
                 );
@@ -594,7 +592,7 @@ impl<'cx> MirFuncBuilder<'cx> {
             }
         }
     }
-    fn build_assign(&mut self, lhs: Spanned<Expr>, rhs: Spanned<Expr>) -> Option<()> {
+    fn build_assign(&mut self, lhs: Spanned<&Expr>, rhs: Spanned<&Expr>) -> Option<()> {
         let lhs_span = lhs.span();
         let (place, lhs_ty) = self.build_place(lhs)?;
         if lhs_ty.is_const {
@@ -609,7 +607,7 @@ impl<'cx> MirFuncBuilder<'cx> {
         self.add_inst(MirInst::Assign(place, value));
         Some(())
     }
-    pub fn build_typecast(&mut self, target_ty: Ty, expr: Spanned<Expr>) -> Option<(Value, Ty)> {
+    pub fn build_typecast(&mut self, target_ty: Ty, expr: Spanned<&Expr>) -> Option<(Value, Ty)> {
         let expr_span = expr.span();
         let (value, source_ty) = self.build_expr(expr)?;
         let var_id = self.declare_var(target_ty.clone(), None, true)?;
@@ -626,7 +624,7 @@ impl<'cx> MirFuncBuilder<'cx> {
         ));
         Some((Value::CopyPlace(var_id.into()), target_ty))
     }
-    pub fn build_stmt(&mut self, stmt: Spanned<Expr>) -> Option<()> {
+    pub fn build_stmt(&mut self, stmt: Spanned<&Expr>) -> Option<()> {
         let (stmt, span) = stmt.into_pair();
         match stmt {
             Expr::Error => panic_expr_error!(span),
@@ -637,10 +635,65 @@ impl<'cx> MirFuncBuilder<'cx> {
             Expr::PrefixOp(_, _) => todo!(),
             Expr::PostfixOp(_, _) => todo!(),
             Expr::InfixOp(lhs, InfixOpKind::Eq, rhs) => {
-                self.build_assign(lhs.into_unboxed(), rhs.into_unboxed())?;
+                self.build_assign(lhs.as_deref(), rhs.as_deref())?;
             }
-            Expr::InfixOp(_, _, _) => todo!(),
-            Expr::OpAssign(_, _, _) => todo!(),
+            Expr::InfixOp(expr0, InfixOpKind::Comma, expr1) => {
+                if self.build_expr(expr0.as_deref()).is_none()
+                    || self.build_expr(expr1.as_deref()).is_none()
+                {
+                    return None;
+                }
+            }
+            Expr::InfixOp(_, InfixOpKind::Bsl | InfixOpKind::Bsr, _) => todo!(),
+            Expr::InfixOp(lhs, _, rhs) => {
+                let (_, lhs_ty) = self.build_expr(lhs.as_deref())?;
+                let (_, rhs_ty) = self.build_expr(rhs.as_deref())?;
+                if merge_tys(&lhs_ty, &rhs_ty).is_none() {
+                    self.err_reporter
+                        .report(&Error::IncompatibleTyForBinOp(&lhs_ty, &rhs_ty).to_spanned(span));
+                    return None;
+                }
+            }
+            Expr::OpAssign(_, AssignOpKind::Bsl | AssignOpKind::Bsr, _) => todo!(),
+            Expr::OpAssign(lhs, op, rhs) => {
+                let lhs_span = lhs.span();
+                let rhs_span = rhs.span();
+                let op = match op {
+                    AssignOpKind::Add => BinOpKind::Add,
+                    AssignOpKind::Sub => BinOpKind::Sub,
+                    AssignOpKind::Mul => BinOpKind::Mul,
+                    AssignOpKind::Div => BinOpKind::Div,
+                    AssignOpKind::Rem => BinOpKind::Rem,
+                    AssignOpKind::BitAnd => BinOpKind::BitAnd,
+                    AssignOpKind::BitOr => BinOpKind::BitOr,
+                    AssignOpKind::BitXor => BinOpKind::BitXor,
+                    AssignOpKind::Bsl | AssignOpKind::Bsr => unreachable!(),
+                };
+                let (lhs_val, lhs_ty) = self.build_expr(lhs.as_deref())?;
+                let (rhs_val, rhs_ty) = self.build_expr(rhs.as_deref())?;
+                let Some(result_ty) = merge_tys(&lhs_ty, &rhs_ty) else {
+                    self.err_reporter
+                        .report(&Error::IncompatibleTyForBinOp(&lhs_ty, &rhs_ty).to_spanned(span));
+                    return None;
+                };
+                let (lhs_val, _) =
+                    self.use_value(result_ty.clone(), (lhs_val, lhs_ty), lhs_span)?;
+                let (rhs_val, _) =
+                    self.use_value(result_ty.clone(), (rhs_val, rhs_ty), rhs_span)?;
+                let result_var_id = self.declare_var(result_ty.clone(), None, true)?;
+                self.add_inst(MirInst::BinOp(result_var_id.into(), lhs_val, op, rhs_val));
+                let lhs = lhs.as_deref();
+                let (place, lhs_ty) = self.build_place(lhs)?;
+                if lhs_ty.is_const {
+                    self.err_reporter
+                        .report(&Error::ExprNotAssignable.to_spanned(lhs_span));
+                    return None;
+                }
+                self.add_inst(MirInst::Assign(
+                    place,
+                    Value::CopyPlace(result_var_id.into()),
+                ));
+            }
             Expr::Decl(item) => self.build_decl(item.to_spanned(span))?,
             Expr::DeclList(items) => {
                 for item in items {
@@ -652,7 +705,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                 self.add_inst(MirInst::Term(MirTerm::Return(Value::Void)));
             }
             Expr::Return(Some(expr)) => {
-                let value = self.build_expr(expr.into_unboxed())?;
+                let value = self.build_expr(expr.as_deref())?;
                 let expect_ty = self.mir_func.ret.clone();
                 let (value, _) = self.use_value(expect_ty, value, span)?;
                 self.add_inst(MirInst::Term(MirTerm::Return(value)));
@@ -660,8 +713,8 @@ impl<'cx> MirFuncBuilder<'cx> {
             Expr::Labal(_) => todo!(),
             Expr::Goto(_) => todo!(),
             // typecast itself have no side effect.
-            Expr::Typecast(_, expr) => _ = self.build_expr(expr.into_unboxed())?,
-            Expr::Call(callee, args) => _ = self.build_call(callee.into_unboxed(), args)?,
+            Expr::Typecast(_, expr) => _ = self.build_expr(expr.as_deref())?,
+            Expr::Call(callee, args) => _ = self.build_call(callee.as_deref(), args.as_deref())?,
             Expr::Subscript(_, _) => todo!(),
             Expr::Break => todo!(),
             Expr::Continue => todo!(),
@@ -679,13 +732,13 @@ impl<'cx> MirFuncBuilder<'cx> {
         Some(())
     }
 
-    pub fn build_place(&mut self, expr: Spanned<Expr>) -> Option<(Place, Ty)> {
+    pub fn build_place(&mut self, expr: Spanned<&Expr>) -> Option<(Place, Ty)> {
         let (mut expr, span) = expr.into_pair();
         let mut projs = Vec::<PlaceProjection>::new();
         loop {
             match expr {
                 Expr::Error => panic_expr_error!(span),
-                Expr::Ident(name) => {
+                &Expr::Ident(name) => {
                     let Some(&var_id) = self.cx.locals.var(name) else {
                         self.err_reporter
                             .report(&Error::VarDoesNotExist(name).to_spanned(span));
@@ -709,7 +762,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                 }
                 Expr::PrefixOp(PrefixOpKind::Deref, inner) => {
                     projs.push(PlaceProjection::Deref);
-                    expr = *inner.into_inner();
+                    expr = inner.as_deref().into_inner();
                 }
                 Expr::Subscript(_, _) => todo!(),
                 Expr::FieldPath(_, _) => todo!(),

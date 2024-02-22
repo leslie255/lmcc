@@ -14,5 +14,6 @@ Parser TODO:
 - Function pointer types.
 - `sizeof` operator.
 - Bitfield struct decl.
+- Variadic function arguments.
 
 - Better error recovery.

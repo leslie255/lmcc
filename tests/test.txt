@@ -2,6 +2,6 @@ void f(unsigned int);
 
 int main() {
     long x = 10;
-    f((unsigned int) x);
+    x += 10;
     return 0;
 }

@@ -79,7 +79,7 @@ pub enum Error<'a> {
     FuncDoesNotExist(IdentStr),
     MismatchedArgCount(usize, usize),
     MismatchedType(&'a Ty_, &'a Ty_),
-    IncompatibleTyForArithmatics(&'a Ty_, &'a Ty_),
+    IncompatibleTyForBinOp(&'a Ty_, &'a Ty_),
     InvalidTypecast(&'a Ty_, &'a Ty_),
 }
 
@@ -153,8 +153,31 @@ impl<T> Spanned<Box<T>> {
         self.map(|x| *x)
     }
 }
-
+impl<T> Spanned<&T> where T: Copy {
+    pub fn copied(self) -> Spanned<T> {
+        self.map(|x| *x)
+    }
+}
 impl<T> Spanned<T> {
+    pub fn as_ref(&self) -> Spanned<&T> {
+        let span = self.span();
+        Spanned {
+            inner: self.inner(),
+            span,
+        }
+    }
+
+    pub fn as_deref(&self) -> Spanned<&<T as Deref>::Target>
+    where
+        T: Deref,
+    {
+        let span = self.span();
+        Spanned {
+            inner: self.inner().deref(),
+            span,
+        }
+    }
+
     pub fn into_boxed(self) -> Spanned<Box<T>> {
         self.map(Box::new)
     }

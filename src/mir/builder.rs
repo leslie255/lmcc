@@ -133,16 +133,7 @@ pub fn merge_tys(lhs_ty: &Ty_, rhs_ty: &Ty_) -> Option<Ty> {
         (TyKind::Bool, TyKind::Bool) => {
             Some(TyKind::Int(Signness::Signed, IntSize::_32).to_ty(false, false, None))
         }
-        (TyKind::Ptr(_, lhs_inner), TyKind::Ptr(_, rhs_inner)) => {
-            if lhs_inner.kind_eq(&rhs_inner) {
-                Some(
-                    TyKind::Ptr(Restrictness::NoRestrict, lhs_inner.clone())
-                        .to_ty(false, false, None),
-                )
-            } else {
-                None
-            }
-        }
+        (TyKind::Ptr(..), TyKind::Ptr(..)) => None,
     }
 }
 

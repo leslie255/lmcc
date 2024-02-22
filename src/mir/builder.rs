@@ -7,8 +7,9 @@ use crate::{
         AssignOpKind, DeclItem, Expr, FloatSize, InfixOpKind, IntSize, PrefixOpKind, Restrictness,
         Signature, Signness, Ty, TyKind, Ty_, VarSpecifier,
     },
+    consteval::consteval_ast,
     error::{Error, ErrorReporter, ExprNotAllowedReason, Span, Spanned, ToSpanned},
-    mir::{BinOpKind, NumLiteralContent},
+    mir::{BinOpKind, BsKind, NumLiteralContent},
     token::NumValue,
     utils::IdentStr,
 };
@@ -521,7 +522,33 @@ impl<'cx> MirFuncBuilder<'cx> {
             }
             Expr::PrefixOp(_, _) => todo!(),
             Expr::PostfixOp(_, _) => todo!(),
-            Expr::InfixOp(_, InfixOpKind::Bsl | InfixOpKind::Bsr, _) => todo!(),
+            Expr::InfixOp(_, InfixOpKind::Assign, _) => todo!(),
+            Expr::InfixOp(lhs, op @ InfixOpKind::Bsl | op @ InfixOpKind::Bsr, rhs) => {
+                let op = match op {
+                    InfixOpKind::Bsl => BsKind::Bsl,
+                    InfixOpKind::Bsr => BsKind::Bsr,
+                    _ => unreachable!(),
+                };
+                let Some(NumValue::I(rhs)) = consteval_ast(rhs.as_deref()) else {
+                    self.err_reporter
+                        .report(&Error::InvalidBsOper.to_spanned(span));
+                    return None;
+                };
+                let Ok(rhs) = u64::try_from(rhs) else {
+                    self.err_reporter
+                        .report(&Error::InvalidBsOper.to_spanned(span));
+                    return None;
+                };
+                let (lhs, ty) = self.build_expr(lhs.as_deref())?;
+                if !ty.is_arithmatic_or_ptr() {
+                    self.err_reporter
+                        .report(&Error::InvalidTyForOp(&ty).to_spanned(span));
+                    return None;
+                }
+                let var_id = self.declare_var(ty.clone(), None, true)?;
+                self.add_inst(MirInst::Bs(var_id.into(), lhs, op, rhs));
+                Some((Value::CopyPlace(var_id.into()), ty))
+            }
             Expr::InfixOp(expr0, InfixOpKind::Comma, expr1) => {
                 self.build_expr(expr0.as_deref());
                 self.build_expr(expr1.as_deref())
@@ -546,7 +573,10 @@ impl<'cx> MirFuncBuilder<'cx> {
                     InfixOpKind::Le => (BinOpKind::Le, true),
                     InfixOpKind::Eq => (BinOpKind::Eq, true),
                     InfixOpKind::Ne => (BinOpKind::Ne, true),
-                    InfixOpKind::Comma | InfixOpKind::Bsl | InfixOpKind::Bsr => unreachable!(),
+                    InfixOpKind::Assign
+                    | InfixOpKind::Comma
+                    | InfixOpKind::Bsl
+                    | InfixOpKind::Bsr => unreachable!(),
                 };
                 let (lhs_val, lhs_ty) = self.build_expr(lhs.as_deref())?;
                 let (rhs_val, rhs_ty) = self.build_expr(rhs.as_deref())?;
@@ -635,7 +665,7 @@ impl<'cx> MirFuncBuilder<'cx> {
             Expr::StrLiteral(_) => (),
             Expr::PrefixOp(_, _) => todo!(),
             Expr::PostfixOp(_, _) => todo!(),
-            Expr::InfixOp(lhs, InfixOpKind::Eq, rhs) => {
+            Expr::InfixOp(lhs, InfixOpKind::Assign, rhs) => {
                 self.build_assign(lhs.as_deref(), rhs.as_deref())?;
             }
             Expr::InfixOp(expr0, InfixOpKind::Comma, expr1) => {
@@ -645,7 +675,6 @@ impl<'cx> MirFuncBuilder<'cx> {
                     return None;
                 }
             }
-            Expr::InfixOp(_, InfixOpKind::Bsl | InfixOpKind::Bsr, _) => todo!(),
             Expr::InfixOp(lhs, _, rhs) => {
                 let (_, lhs_ty) = self.build_expr(lhs.as_deref())?;
                 let (_, rhs_ty) = self.build_expr(rhs.as_deref())?;

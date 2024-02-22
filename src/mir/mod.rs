@@ -7,9 +7,7 @@ use std::{
 use index_vec::IndexVec;
 
 use crate::{
-    ast::{EnumFields, Signature, StructFields, Ty},
-    error::Spanned,
-    utils::{index_vec_kv_pairs, DoInBetween, IdentStr},
+    ast::{EnumFields, Signature, StructFields, Ty}, error::Spanned, utils::{index_vec_kv_pairs, DoInBetween, IdentStr}
 };
 
 mod builder;
@@ -133,6 +131,7 @@ pub enum MirInst {
     /// - assignments (one of the operand is a place not a value).
     /// - member-accessing (see `Place`).
     BinOp(Place, Value, BinOpKind, Value),
+    Bs(Place, Value, BsKind, u64),
     /// Call a function statically, store it into a place if result isn't `void`.
     CallStatic(Option<Place>, IdentStr, Vec<Value>),
     /// Call a function dynamically, store it into a place if result isn't `void`.
@@ -285,6 +284,12 @@ pub enum BinOpKind {
     Ne,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BsKind {
+    Bsl,
+    Bsr,
+}
+
 impl Debug for VarId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "var{}", self.0)
@@ -351,6 +356,7 @@ impl Debug for MirInst {
             Self::BitfieldAssign(..) => write!(f, "TODO(bitfield assign)"),
             Self::UnOp(place, op, oper) => write!(f, "{place:?} = {op} {oper:?}"),
             Self::BinOp(place, lhs, op, rhs) => write!(f, "{place:?} = {lhs:?} {op} {rhs:?}"),
+            Self::Bs(place, lhs, kind, rhs) => write!(f, "{place:?} = {lhs:?} {kind} {rhs:?}"),
             Self::CallStatic(Some(lhs), callee, args) => {
                 write!(f, "{lhs:?} = call {callee:?}(")?;
                 let f = args.iter().try_do_in_between(
@@ -434,6 +440,15 @@ impl Display for BinOpKind {
             Self::Le => write!(f, "<="),
             Self::Eq => write!(f, "=="),
             Self::Ne => write!(f, "!="),
+        }
+    }
+}
+
+impl Display for BsKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BsKind::Bsl => write!(f, "<<"),
+            BsKind::Bsr => write!(f, ">>"),
         }
     }
 }

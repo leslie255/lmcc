@@ -8,6 +8,7 @@ use parser::Parser;
 use crate::{error::ErrorReporter, file_reader::FileReader, mir::NamesContext, token::TokenStream};
 
 mod ast;
+mod consteval;
 mod error;
 mod file_reader;
 mod intern_str;

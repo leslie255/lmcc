@@ -1543,6 +1543,7 @@ impl Parser {
                 Token::Gt => infix_op!(InfixOp, InfixOpKind::Gt, 6),
                 Token::LtEq => infix_op!(InfixOp, InfixOpKind::Le, 6),
                 Token::GtEq => infix_op!(InfixOp, InfixOpKind::Ge, 6),
+                Token::Eq => infix_op!(InfixOp, InfixOpKind::Assign, 7),
                 Token::EqEq => infix_op!(InfixOp, InfixOpKind::Eq, 7),
                 Token::ExcEq => infix_op!(InfixOp, InfixOpKind::Ne, 7),
                 Token::And => infix_op!(InfixOp, InfixOpKind::BitAnd, 8),
@@ -1552,7 +1553,6 @@ impl Parser {
                 Token::OrOr => infix_op!(InfixOp, InfixOpKind::Or, 12),
                 // Assignments technically have right-to-left associativity, but most compilers don't care,
                 // as only expressions with very high (aka. small) precedence can legally be the LHS of assignments.
-                Token::Eq => infix_op!(InfixOp, InfixOpKind::Eq, 14),
                 Token::AddEq => infix_op!(OpAssign, AssignOpKind::Add, 14),
                 Token::SubEq => infix_op!(OpAssign, AssignOpKind::Sub, 14),
                 Token::MulEq => infix_op!(OpAssign, AssignOpKind::Mul, 14),

@@ -81,6 +81,8 @@ pub enum Error<'a> {
     MismatchedType(&'a Ty_, &'a Ty_),
     IncompatibleTyForBinOp(&'a Ty_, &'a Ty_),
     InvalidTypecast(&'a Ty_, &'a Ty_),
+    InvalidTyForOp(&'a Ty_),
+    InvalidBsOper,
 }
 
 impl Error<'_> {
@@ -153,7 +155,10 @@ impl<T> Spanned<Box<T>> {
         self.map(|x| *x)
     }
 }
-impl<T> Spanned<&T> where T: Copy {
+impl<T> Spanned<&T>
+where
+    T: Copy,
+{
     pub fn copied(self) -> Spanned<T> {
         self.map(|x| *x)
     }

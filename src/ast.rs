@@ -305,6 +305,7 @@ pub enum PostfixOpKind {
 /// Does include BSL/BSR, compile error later down the line if the RHS is not an integer literal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InfixOpKind {
+    Assign,
     Add,
     Sub,
     Mul,

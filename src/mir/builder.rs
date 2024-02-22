@@ -238,22 +238,24 @@ impl<'cx> MirFuncBuilder<'cx> {
         expect_ty: Ty,
         (num, num_ty): (NumLiteralContent, Ty),
         span: Span,
-    ) -> Option<(Value, Ty)> {
+    ) -> Option<Value> {
         match &expect_ty.kind {
             TyKind::Int(..) => {
                 let num = match num {
-                    NumLiteralContent::U(..) | NumLiteralContent::I(..) => Value::Num(num),
+                    NumLiteralContent::U(..) | NumLiteralContent::I(..) => {
+                        Value::Num(num, expect_ty.clone())
+                    }
                     NumLiteralContent::F(f) if f.is_sign_positive() => {
                         let u = f.round() as u64;
-                        Value::Num(u.into())
+                        Value::Num(u.into(), expect_ty.clone())
                     }
                     NumLiteralContent::F(f) if f.is_sign_negative() => {
-                        let i = f.round() as i64;
-                        Value::Num(i.into())
+                        let u = f.round() as u64;
+                        Value::Num(u.into(), expect_ty.clone())
                     }
                     _ => unreachable!(),
                 };
-                Some((num, expect_ty))
+                Some(num)
             }
             TyKind::Bool => {
                 let is_true = match num {
@@ -262,19 +264,19 @@ impl<'cx> MirFuncBuilder<'cx> {
                     NumLiteralContent::F(f) => f != 0.0,
                 };
                 let num: u64 = if is_true { 1 } else { 0 };
-                Some((Value::Num(num.into()), expect_ty))
+                Some(Value::Num(num.into(), expect_ty.clone()))
             }
             TyKind::Float(..) => {
                 let num = match num {
-                    NumLiteralContent::U(u) => Value::Num((u as f64).into()),
-                    NumLiteralContent::I(i) => Value::Num((i as f64).into()),
-                    f @ NumLiteralContent::F(..) => Value::Num(f),
+                    NumLiteralContent::U(u) => Value::Num((u as f64).into(), expect_ty.clone()),
+                    NumLiteralContent::I(i) => Value::Num((i as f64).into(), expect_ty.clone()),
+                    f @ NumLiteralContent::F(..) => Value::Num(f, expect_ty.clone()),
                 };
-                Some((num, expect_ty))
+                Some(num)
             }
             TyKind::Ptr(..) => match num {
                 NumLiteralContent::U(..) | NumLiteralContent::I(..) => {
-                    Some((Value::Num(num), expect_ty))
+                    Some(Value::Num(num, expect_ty.clone()))
                 }
                 _ => {
                     self.err_reporter
@@ -290,20 +292,21 @@ impl<'cx> MirFuncBuilder<'cx> {
         }
     }
     /// If types are unequal, elaborates typecast or report error.
+    /// If types are equal, return the original value.
     fn use_value(
         &mut self,
         expect_ty: Ty,
         (value, value_ty): (Value, Ty),
         span: Span,
-    ) -> Option<(Value, Ty)> {
+    ) -> Option<Value> {
         if value_ty.kind_eq(&expect_ty) {
-            return Some((value, value_ty));
+            return Some(value);
         }
         if value_ty.is_arr() || expect_ty.is_arr() {
             todo!("arrays");
         }
         // Compile-time implicit cast for numeric types.
-        if let &Value::Num(num) = &value {
+        if let &Value::Num(num, _) = &value {
             return self.use_num(expect_ty, (num, value_ty), span);
         }
         // We already checked earlier that expect_ty does not equal to value_ty.
@@ -315,7 +318,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                 value_ty,
                 value,
             ));
-            Some((Value::CopyPlace(var_id.into()), expect_ty))
+            Some(Value::CopyPlace(var_id.into()))
         } else {
             self.err_reporter
                 .report(&Error::MismatchedType(&expect_ty, &value_ty).to_spanned(span));
@@ -386,7 +389,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                     NumLiteralContent::I(i) => NumLiteralContent::I(-i),
                     NumLiteralContent::F(f) => NumLiteralContent::F(-f),
                 };
-                Some((Value::Num(num), ty))
+                Some((Value::Num(num, ty.clone()), ty))
             }
             expr => {
                 let (_value, ty) = self.build_expr(expr.to_spanned(span))?;
@@ -425,7 +428,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                             .report(&Error::IllegalVoidTy.to_spanned(span));
                         return None;
                     }
-                    let value = self.use_value(lhs_ty.clone(), rhs, rhs_span)?.0;
+                    let value = self.use_value(lhs_ty.clone(), rhs, rhs_span)?;
                     let var_id = self.declare_var(lhs_ty, Some(name), false)?;
                     let place = Place::from(var_id).to_spanned(name.span());
                     self.add_inst(MirInst::Assign(place.into_inner(), value));
@@ -471,7 +474,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                 for (arg, (expect_ty, _)) in args.into_inner().into_iter().zip(&sig.args) {
                     let arg_span = arg.span();
                     let arg = self.build_expr(arg.as_ref())?;
-                    let (arg_val, _) = self.use_value(expect_ty.clone(), arg, arg_span)?;
+                    let arg_val = self.use_value(expect_ty.clone(), arg, arg_span)?;
                     arg_vals.push(arg_val);
                 }
                 match &sig.ret_ty.kind {
@@ -502,7 +505,7 @@ impl<'cx> MirFuncBuilder<'cx> {
             }
             &Expr::NumLiteral(num) => {
                 let (num_literal, ty) = self.build_num_literal(num, span)?;
-                Some((Value::Num(num_literal), ty))
+                Some((Value::Num(num_literal, ty.clone()), ty))
             }
             &Expr::CharLiteral(c) => Some((
                 Value::Char(c),
@@ -555,10 +558,8 @@ impl<'cx> MirFuncBuilder<'cx> {
                 if is_cmp {
                     result_ty = TyKind::Bool.to_ty(false, false, None);
                 }
-                let (lhs_val, _) =
-                    self.use_value(result_ty.clone(), (lhs_val, lhs_ty), lhs_span)?;
-                let (rhs_val, _) =
-                    self.use_value(result_ty.clone(), (rhs_val, rhs_ty), rhs_span)?;
+                let lhs_val = self.use_value(result_ty.clone(), (lhs_val, lhs_ty), lhs_span)?;
+                let rhs_val = self.use_value(result_ty.clone(), (rhs_val, rhs_ty), rhs_span)?;
                 let var_id = self.declare_var(result_ty.clone(), None, true)?;
                 self.add_inst(MirInst::BinOp(var_id.into(), lhs_val, op, rhs_val));
                 Some((Value::CopyPlace(var_id.into()), result_ty))
@@ -603,7 +604,7 @@ impl<'cx> MirFuncBuilder<'cx> {
         }
         let rhs_span = rhs.span();
         let rhs = self.build_expr(rhs)?;
-        let (value, _) = self.use_value(lhs_ty, rhs, rhs_span)?;
+        let value = self.use_value(lhs_ty, rhs, rhs_span)?;
         self.add_inst(MirInst::Assign(place, value));
         Some(())
     }
@@ -676,10 +677,8 @@ impl<'cx> MirFuncBuilder<'cx> {
                         .report(&Error::IncompatibleTyForBinOp(&lhs_ty, &rhs_ty).to_spanned(span));
                     return None;
                 };
-                let (lhs_val, _) =
-                    self.use_value(result_ty.clone(), (lhs_val, lhs_ty), lhs_span)?;
-                let (rhs_val, _) =
-                    self.use_value(result_ty.clone(), (rhs_val, rhs_ty), rhs_span)?;
+                let lhs_val = self.use_value(result_ty.clone(), (lhs_val, lhs_ty), lhs_span)?;
+                let rhs_val = self.use_value(result_ty.clone(), (rhs_val, rhs_ty), rhs_span)?;
                 let result_var_id = self.declare_var(result_ty.clone(), None, true)?;
                 self.add_inst(MirInst::BinOp(result_var_id.into(), lhs_val, op, rhs_val));
                 let lhs = lhs.as_deref();
@@ -707,7 +706,7 @@ impl<'cx> MirFuncBuilder<'cx> {
             Expr::Return(Some(expr)) => {
                 let value = self.build_expr(expr.as_deref())?;
                 let expect_ty = self.mir_func.ret.clone();
-                let (value, _) = self.use_value(expect_ty, value, span)?;
+                let value = self.use_value(expect_ty, value, span)?;
                 self.add_inst(MirInst::Term(MirTerm::Return(value)));
             }
             Expr::Labal(_) => todo!(),

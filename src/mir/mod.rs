@@ -164,7 +164,7 @@ impl index_vec::Idx for VarId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct VarInfo {
     /// Is it an argument of the function?
     pub(self) is_arg: bool,
@@ -225,7 +225,7 @@ pub enum PlaceProjection {
 /// A `Value` is the representation of an r-value.
 #[derive(Clone, PartialEq)]
 pub enum Value {
-    Num(NumLiteralContent),
+    Num(NumLiteralContent, Ty),
     Char(u8),
     /// TODO
     Str(std::convert::Infallible),
@@ -310,7 +310,7 @@ impl Debug for NumLiteralContent {
 impl Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Num(n) => write!(f, "num({n:?})"),
+            Self::Num(n, ty) => write!(f, "num({ty:?} {n:?})"),
             Self::Char(c) => write!(f, "char({c:?})"),
             Self::Str(..) => write!(f, "str(TODO)"),
             Self::CopyPlace(place) => write!(f, "copy({place:?})"),
@@ -344,7 +344,9 @@ impl Debug for Place {
 impl Debug for MirInst {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Tycast(lhs, target_ty, source_ty, val) => write!(f, "{lhs:?} = ({source_ty:?} -> {target_ty:?}) {val:?}"),
+            Self::Tycast(lhs, target_ty, source_ty, val) => {
+                write!(f, "{lhs:?} = ({source_ty:?} -> {target_ty:?}) {val:?}")
+            }
             Self::Assign(lhs, rhs) => write!(f, "{lhs:?} = {rhs:?}"),
             Self::BitfieldAssign(..) => write!(f, "TODO(bitfield assign)"),
             Self::UnOp(place, op, oper) => write!(f, "{place:?} = {op} {oper:?}"),
@@ -447,6 +449,29 @@ impl Debug for MirBlock {
                 .field("insts", &self.insts)
                 .field("unreachable_insts", &self.unreachable_insts)
                 .finish()
+        }
+    }
+}
+
+impl Debug for VarInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(name) = &self.name {
+            write!(
+                f,
+                "({}{:?} {:?}{})",
+                if self.is_arg { "is_arg, " } else { "" },
+                &self.ty,
+                name,
+                if self.is_tmp { ", is_tmp" } else { "" },
+            )
+        } else {
+            write!(
+                f,
+                "({}{:?}{})",
+                if self.is_arg { "is_arg, " } else { "" },
+                &self.ty,
+                if self.is_tmp { ", is_tmp" } else { "" },
+            )
         }
     }
 }

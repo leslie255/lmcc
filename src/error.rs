@@ -11,7 +11,11 @@ use std::{
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
-    ast::Ty, file_reader::FileReader, source_string::SourceIdx, token::Token, utils::{derive_display_from_debug, fixme, IdentStr}
+    ast::Ty_,
+    file_reader::FileReader,
+    source_string::SourceIdx,
+    token::Token,
+    utils::{derive_display_from_debug, fixme, IdentStr},
 };
 
 pub type CowStr = Cow<'static, str>;
@@ -64,7 +68,8 @@ pub enum Error<'a> {
     RhsInStructUnion,
     AnonStructUnion,
     AnonEnum,
-    ExprNoAssignable,
+    ExprNotAssignable,
+    IllegalVoidTy,
     VarDoesNotExist(IdentStr),
     OutOfRangeNumber(i128),
     ExprNotAllowed(ExprNotAllowedReason),
@@ -73,7 +78,8 @@ pub enum Error<'a> {
     TypedefWithRhs,
     FuncDoesNotExist(IdentStr),
     MismatchedArgCount(usize, usize),
-    MismatchedType(&'a Ty, &'a Ty),
+    MismatchedType(&'a Ty_, &'a Ty_),
+    IncompatibleTyForArithmatics(&'a Ty_, &'a Ty_),
 }
 
 impl Error<'_> {

@@ -1,8 +1,10 @@
 void f(unsigned int);
 
 int main() {
-    int x = 10;
-    unsigned int *p = &x;
-    *p = 20;
+    signed char x = 10;
+    unsigned short y = 20;
+    unsigned int z = x + y;
+    const int a = 10;
+    a = 20;
     return 0;
 }

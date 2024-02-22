@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use std::{
     fmt::{self, Debug},
     rc::Rc,
@@ -27,6 +26,7 @@ pub enum Expr {
     InfixOp(ChildExpr, InfixOpKind, ChildExpr),
     OpAssign(ChildExpr, AssignOpKind, ChildExpr),
     Decl(DeclItem),
+    #[allow(dead_code)]
     DeclList(Vec<DeclItem>),
     EmptyDecl(Ty),
     Return(Option<ChildExpr>),
@@ -152,6 +152,24 @@ impl Ty_ {
             _ => false,
         }
     }
+    pub fn kind_eq(&self, other: &Self) -> bool {
+        match (&self.kind, &other.kind) {
+            (TyKind::Int(..), TyKind::Int(..))
+            | (TyKind::Float(..), TyKind::Float(..))
+            | (TyKind::Bool, TyKind::Bool)
+            | (TyKind::Struct(..), TyKind::Struct(..))
+            | (TyKind::Union(..), TyKind::Union(..))
+            | (TyKind::Enum(..), TyKind::Enum(..))
+            | (TyKind::Void, TyKind::Void)
+            | (TyKind::Error, TyKind::Error) => true,
+            (
+                &TyKind::FixedArr(ref lhs_inner, lhs_size),
+                &TyKind::FixedArr(ref rhs_inner, rhs_size),
+            ) => lhs_size == rhs_size && lhs_inner.kind_eq(&rhs_inner),
+            (TyKind::Ptr(_, lhs_inner), TyKind::Ptr(_, rhs_inner)) => lhs_inner.kind_eq(&rhs_inner),
+            _ => false,
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Restrictness {
@@ -168,6 +186,16 @@ pub enum Signness {
     Signed,
     Unsigned,
 }
+impl Signness {
+    #[allow(dead_code)]
+    pub const fn is_signed(self) -> bool {
+        matches!(self, Self::Signed)
+    }
+    #[allow(dead_code)]
+    pub const fn is_unsigned(self) -> bool {
+        matches!(self, Self::Signed)
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntSize {
     /// char
@@ -179,14 +207,46 @@ pub enum IntSize {
     /// long / long long
     _64,
 }
+impl IntSize {
+    /// Size of the integer in bytes.
+    pub const fn size(self) -> u64 {
+        match self {
+            IntSize::_8 => 1,
+            IntSize::_16 => 2,
+            IntSize::_32 => 4,
+            IntSize::_64 => 8,
+        }
+    }
+    pub const fn min(self, other: Self) -> Self {
+        if self.size() < other.size() {
+            other
+        } else {
+            self
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FloatSize {
     /// float
     _32,
     /// double
     _64,
-    /// Unsupported but defined here for error reporting.
-    LongDouble,
+}
+impl FloatSize {
+    /// Size of the float in bytes.
+    pub const fn size(self) -> u64 {
+        match self {
+            FloatSize::_32 => 4,
+            FloatSize::_64 => 8,
+        }
+    }
+    pub const fn min(self, other: Self) -> Self {
+        if self.size() > other.size() {
+            self
+        } else {
+            other
+        }
+    }
 }
 /// Formally known as **storage specifiers**.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,13 +342,6 @@ pub enum AssignOpKind {
     BitAnd,
     BitOr,
     BitXor,
-    Gr,
-    GrEq,
-    Le,
-    LeEq,
-    Eq,
-    Ne,
-    Comma,
     Bsl,
     Bsr,
 }
@@ -303,13 +356,6 @@ impl AssignOpKind {
             AssignOpKind::BitAnd => InfixOpKind::BitAnd,
             AssignOpKind::BitOr => InfixOpKind::BitOr,
             AssignOpKind::BitXor => InfixOpKind::BitXor,
-            AssignOpKind::Gr => InfixOpKind::Gt,
-            AssignOpKind::GrEq => InfixOpKind::Ge,
-            AssignOpKind::Le => InfixOpKind::Lt,
-            AssignOpKind::LeEq => InfixOpKind::Le,
-            AssignOpKind::Eq => InfixOpKind::Eq,
-            AssignOpKind::Ne => InfixOpKind::Ne,
-            AssignOpKind::Comma => InfixOpKind::Comma,
             AssignOpKind::Bsl => InfixOpKind::Bsl,
             AssignOpKind::Bsr => InfixOpKind::Bsr,
         }
@@ -384,9 +430,11 @@ impl ExprOrBlock {
             Self::Block(block) => block.span(),
         }
     }
+    #[allow(dead_code)]
     pub const fn is_block(&self) -> bool {
         matches!(self, Self::Block(..))
     }
+    #[allow(dead_code)]
     pub const fn is_expr(&self) -> bool {
         matches!(self, Self::Expr(..))
     }
@@ -487,9 +535,6 @@ impl Debug for Ty_ {
                     IntSize::_32 => write!(f, "{}{}int", const_!(), volatile!())?,
                     IntSize::_64 => write!(f, "{}{}long", const_!(), volatile!())?,
                 }
-            }
-            TyKind::Float(FloatSize::LongDouble) => {
-                write!(f, "{}{}long double", const_!(), volatile!())?
             }
             TyKind::Float(FloatSize::_64) => write!(f, "{}{}double", const_!(), volatile!())?,
             TyKind::Float(FloatSize::_32) => write!(f, "{}{}float", const_!(), volatile!())?,

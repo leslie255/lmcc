@@ -8,7 +8,7 @@ use crate::{
         Signness, Ty, TyKind, Ty_, VarSpecifier,
     },
     error::{Error, ErrorReporter, ExprNotAllowedReason, Span, Spanned, ToSpanned},
-    mir::NumLiteralContent,
+    mir::{BinOpKind, NumLiteralContent},
     token::NumValue,
     utils::{fixme, IdentStr},
 };
@@ -74,6 +74,75 @@ pub fn make_mir_for_item(cx: &mut NamesContext, item: DeclItem, err_reporter: Rc
             }
         }
         _ => todo!(),
+    }
+}
+
+/// Find the result type of when types are operated together.
+pub fn merge_tys(lhs_ty: &Ty_, rhs_ty: &Ty_) -> Option<Ty> {
+    match (&lhs_ty.kind, &rhs_ty.kind) {
+        (
+            _,
+            &TyKind::FixedArr(..)
+            | TyKind::Struct(..)
+            | TyKind::Union(..)
+            | TyKind::Enum(..)
+            | TyKind::Void,
+        )
+        | (
+            &TyKind::FixedArr(..)
+            | TyKind::Struct(..)
+            | TyKind::Union(..)
+            | TyKind::Enum(..)
+            | TyKind::Void,
+            _,
+        ) => None,
+        (_, TyKind::Error) => panic!("reached internal `ERROR` type in MIR stage"),
+        (TyKind::Error, _) => panic!("reached internal `ERROR` type in MIR stage"),
+        (&TyKind::Int(lhs_sign, lhs_size), &TyKind::Int(rhs_sign, rhs_size)) => {
+            let sign = if lhs_sign.is_unsigned() || rhs_sign.is_unsigned() {
+                Signness::Unsigned
+            } else {
+                Signness::Signed
+            };
+            let size = if lhs_size == rhs_size {
+                lhs_size
+            } else {
+                lhs_size.min(rhs_size).min(IntSize::_32)
+            };
+            Some(TyKind::Int(sign, size).to_ty(false, false, None))
+        }
+        (&TyKind::Float(lhs_size), &TyKind::Float(rhs_size)) => {
+            Some(TyKind::Float(lhs_size.min(rhs_size)).to_ty(false, false, None))
+        }
+        (TyKind::Int(..), &TyKind::Float(size)) | (&TyKind::Float(size), TyKind::Int(..)) => {
+            Some(TyKind::Float(size).to_ty(false, false, None))
+        }
+        (&TyKind::Int(sign, size), TyKind::Bool) | (TyKind::Bool, &TyKind::Int(sign, size)) => {
+            Some(TyKind::Int(sign, size.min(IntSize::_32)).to_ty(false, false, None))
+        }
+        (&TyKind::Int(..), TyKind::Ptr(_, inner))
+        | (TyKind::Ptr(_, inner), &TyKind::Int(..))
+        | (TyKind::Bool, TyKind::Ptr(_, inner))
+        | (TyKind::Ptr(_, inner), TyKind::Bool) => {
+            Some(TyKind::Ptr(Restrictness::NoRestrict, inner.clone()).to_ty(false, false, None))
+        }
+        (&TyKind::Float(size), TyKind::Bool) | (TyKind::Bool, &TyKind::Float(size)) => {
+            Some(TyKind::Float(size).to_ty(false, false, None))
+        }
+        (TyKind::Float(..), TyKind::Ptr(..)) | (TyKind::Ptr(..), TyKind::Float(..)) => None,
+        (TyKind::Bool, TyKind::Bool) => {
+            Some(TyKind::Int(Signness::Signed, IntSize::_32).to_ty(false, false, None))
+        }
+        (TyKind::Ptr(_, lhs_inner), TyKind::Ptr(_, rhs_inner)) => {
+            if lhs_inner.kind_eq(&rhs_inner) {
+                Some(
+                    TyKind::Ptr(Restrictness::NoRestrict, lhs_inner.clone())
+                        .to_ty(false, false, None),
+                )
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -348,20 +417,22 @@ impl<'cx> MirFuncBuilder<'cx> {
                 name,
                 rhs,
             ) => {
-                let var_id = self.declare_var(ty.into_inner(), Some(name), false)?;
                 if let Some(rhs) = rhs {
                     // Have to manually re-write part of `build_assign` here because partial borrow.
-                    let place = Place::from(var_id).to_spanned(name.span());
                     let rhs_span = rhs.span();
                     let rhs = self.build_expr(rhs.into_unboxed())?;
-                    let lhs_ty = self.mir_func.vars[var_id].ty.clone();
-                    if lhs_ty.is_void() || lhs_ty.is_const {
+                    let lhs_ty = ty.into_inner();
+                    if lhs_ty.is_void() {
                         self.err_reporter
-                            .report(&Error::ExprNoAssignable.to_spanned(span));
+                            .report(&Error::IllegalVoidTy.to_spanned(span));
                         return None;
                     }
-                    let value = self.use_value(lhs_ty, rhs, rhs_span)?.0;
+                    let value = self.use_value(lhs_ty.clone(), rhs, rhs_span)?.0;
+                    let var_id = self.declare_var(lhs_ty, Some(name), false)?;
+                    let place = Place::from(var_id).to_spanned(name.span());
                     self.add_inst(MirInst::Assign(place.into_inner(), value));
+                } else {
+                    self.declare_var(ty.into_inner(), Some(name), false)?;
                 }
                 Some(())
             }
@@ -453,7 +524,58 @@ impl<'cx> MirFuncBuilder<'cx> {
             }
             Expr::PrefixOp(_, _) => todo!(),
             Expr::PostfixOp(_, _) => todo!(),
-            Expr::InfixOp(_, _, _) => todo!(),
+            Expr::InfixOp(_, InfixOpKind::Bsl | InfixOpKind::Bsr, _) => todo!(),
+            Expr::InfixOp(_, InfixOpKind::Comma, _) => todo!(),
+            Expr::InfixOp(
+                _,
+                InfixOpKind::Gt
+                | InfixOpKind::Ge
+                | InfixOpKind::Lt
+                | InfixOpKind::Le
+                | InfixOpKind::Eq
+                | InfixOpKind::Ne,
+                _,
+            ) => todo!(),
+            Expr::InfixOp(lhs, op, rhs) => {
+                let lhs_span = lhs.span();
+                let rhs_span = rhs.span();
+                let op = match op {
+                    InfixOpKind::Add => BinOpKind::Add,
+                    InfixOpKind::Sub => BinOpKind::Sub,
+                    InfixOpKind::Mul => BinOpKind::Mul,
+                    InfixOpKind::Div => BinOpKind::Div,
+                    InfixOpKind::Rem => BinOpKind::Rem,
+                    InfixOpKind::BitAnd => BinOpKind::BitAnd,
+                    InfixOpKind::BitOr => BinOpKind::BitOr,
+                    InfixOpKind::BitXor => BinOpKind::BitXor,
+                    InfixOpKind::And => BinOpKind::And,
+                    InfixOpKind::Or => BinOpKind::Or,
+                    InfixOpKind::Gt
+                    | InfixOpKind::Ge
+                    | InfixOpKind::Lt
+                    | InfixOpKind::Le
+                    | InfixOpKind::Eq
+                    | InfixOpKind::Ne
+                    | InfixOpKind::Comma
+                    | InfixOpKind::Bsl
+                    | InfixOpKind::Bsr => unreachable!(),
+                };
+                let (lhs_val, lhs_ty) = self.build_expr(lhs.into_unboxed())?;
+                let (rhs_val, rhs_ty) = self.build_expr(rhs.into_unboxed())?;
+                let Some(result_ty) = merge_tys(&lhs_ty, &rhs_ty) else {
+                    self.err_reporter.report(
+                        &Error::IncompatibleTyForArithmatics(&lhs_ty, &rhs_ty).to_spanned(span),
+                    );
+                    return None;
+                };
+                let (lhs_val, _) =
+                    self.use_value(result_ty.clone(), (lhs_val, lhs_ty), lhs_span)?;
+                let (rhs_val, _) =
+                    self.use_value(result_ty.clone(), (rhs_val, rhs_ty), rhs_span)?;
+                let var_id = self.declare_var(result_ty.clone(), None, true)?;
+                self.add_inst(MirInst::BinOp(var_id.into(), lhs_val, op, rhs_val));
+                Some((Value::CopyPlace(var_id.into()), result_ty))
+            }
             Expr::OpAssign(_, _, _) => todo!(),
             Expr::Typecast(_, _) => todo!(),
             Expr::Call(callee, args) => self.build_call(callee.into_unboxed(), args),
@@ -484,11 +606,16 @@ impl<'cx> MirFuncBuilder<'cx> {
     fn build_assign(&mut self, lhs: Spanned<Expr>, rhs: Spanned<Expr>) -> Option<()> {
         let lhs_span = lhs.span();
         let (place, lhs_ty) = self.build_place(lhs)?;
-        let place = place.to_spanned(lhs_span);
+        if lhs_ty.is_const {
+            self.err_reporter
+                .report(&Error::ExprNotAssignable.to_spanned(lhs_span));
+            self.build_expr(rhs)?;
+            return None;
+        }
         let rhs_span = rhs.span();
         let rhs = self.build_expr(rhs)?;
         let (value, _) = self.use_value(lhs_ty, rhs, rhs_span)?;
-        self.add_inst(MirInst::Assign(place.into_inner(), value));
+        self.add_inst(MirInst::Assign(place, value));
         Some(())
     }
     pub fn build_stmt(&mut self, stmt: Spanned<Expr>) -> Option<()> {
@@ -579,7 +706,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                 Expr::FieldPath(_, _) => todo!(),
                 _ => {
                     self.err_reporter
-                        .report(&Error::ExprNoAssignable.to_spanned(span));
+                        .report(&Error::ExprNotAssignable.to_spanned(span));
                     return None;
                 }
             }

@@ -577,7 +577,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                 Some((Value::CopyPlace(var_id.into()), result_ty))
             }
             Expr::OpAssign(_, _, _) => todo!(),
-            Expr::Typecast(_, _) => todo!(),
+            Expr::Typecast(target_ty, expr) => self.build_typecast(target_ty, expr.into_unboxed()),
             Expr::Call(callee, args) => self.build_call(callee.into_unboxed(), args),
             Expr::List(_) => todo!(),
             Expr::Tenary(_, _, _) => todo!(),
@@ -618,6 +618,23 @@ impl<'cx> MirFuncBuilder<'cx> {
         self.add_inst(MirInst::Assign(place, value));
         Some(())
     }
+    pub fn build_typecast(&mut self, target_ty: Ty, expr: Spanned<Expr>) -> Option<(Value, Ty)> {
+        let expr_span = expr.span();
+        let (value, source_ty) = self.build_expr(expr)?;
+        let var_id = self.declare_var(target_ty.clone(), None, true)?;
+        if !source_ty.is_arithmatic_or_ptr() || !target_ty.is_arithmatic_or_ptr() {
+            self.err_reporter
+                .report(&Error::InvalidTypecast(&source_ty, &target_ty).to_spanned(expr_span));
+            return None;
+        }
+        self.add_inst(MirInst::Tycast(
+            var_id.into(),
+            source_ty,
+            target_ty.clone(),
+            value,
+        ));
+        Some((Value::CopyPlace(var_id.into()), target_ty))
+    }
     pub fn build_stmt(&mut self, stmt: Spanned<Expr>) -> Option<()> {
         let (stmt, span) = stmt.into_pair();
         match stmt {
@@ -651,7 +668,8 @@ impl<'cx> MirFuncBuilder<'cx> {
             }
             Expr::Labal(_) => todo!(),
             Expr::Goto(_) => todo!(),
-            Expr::Typecast(_, _) => todo!(),
+            // typecast itself have no side effect.
+            Expr::Typecast(_, expr) => _ = self.build_expr(expr.into_unboxed())?,
             Expr::Call(callee, args) => _ = self.build_call(callee.into_unboxed(), args)?,
             Expr::Subscript(_, _) => todo!(),
             Expr::Break => todo!(),

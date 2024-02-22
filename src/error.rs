@@ -80,6 +80,7 @@ pub enum Error<'a> {
     MismatchedArgCount(usize, usize),
     MismatchedType(&'a Ty_, &'a Ty_),
     IncompatibleTyForArithmatics(&'a Ty_, &'a Ty_),
+    InvalidTypecast(&'a Ty_, &'a Ty_),
 }
 
 impl Error<'_> {

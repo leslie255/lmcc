@@ -576,7 +576,7 @@ impl Parser {
             TyKind::Int(signness.into_inner(), IntSize::_32)
         } else {
             self.err_reporter
-                .report(&Error::ExpectTy.to_spanned(decl_speci.span()));
+                .report(&Error::ExpectTyExpr.to_spanned(decl_speci.span()));
             TyKind::Error
         }
         .to_ty(

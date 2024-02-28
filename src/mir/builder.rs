@@ -97,8 +97,9 @@ pub fn merge_tys(lhs_ty: &Ty_, rhs_ty: &Ty_) -> Option<Ty> {
             | TyKind::Void,
             _,
         ) => None,
-        (_, TyKind::Error) => panic!("reached internal `ERROR` type in MIR stage"),
-        (TyKind::Error, _) => panic!("reached internal `ERROR` type in MIR stage"),
+        (_, TyKind::Error) | (TyKind::Error, _) => {
+            panic!("reached internal `ERROR` type in MIR stage")
+        }
         (&TyKind::Int(lhs_sign, lhs_size), &TyKind::Int(rhs_sign, rhs_size)) => {
             let sign = if lhs_sign.is_unsigned() || rhs_sign.is_unsigned() {
                 Signness::Unsigned
@@ -216,6 +217,7 @@ impl<'cx> MirFuncBuilder<'cx> {
         Some(())
     }
 
+    #[track_caller]
     fn declare_var(
         &mut self,
         ty: Ty,
@@ -497,10 +499,12 @@ impl<'cx> MirFuncBuilder<'cx> {
         let (expr, span) = expr.into_pair();
         match expr {
             Expr::Error => panic_expr_error!(span),
-            Expr::Ident(..)
-            | Expr::PrefixOp(PrefixOpKind::Deref, _)
-            | Expr::Subscript(..)
-            | Expr::FieldPath(..) => {
+            &Expr::Ident(ident) => {
+                let &var_id = self.cx.locals.var(ident)?;
+                let ty = self.mir_func.vars[var_id].ty.clone();
+                Some((Value::CopyPlace(var_id.into()), ty))
+            }
+            Expr::PrefixOp(PrefixOpKind::Deref, _) | Expr::Subscript(..) | Expr::FieldPath(..) => {
                 let (place, ty) = self.build_place(expr.to_spanned(span))?;
                 Some((Value::CopyPlace(place), ty))
             }
@@ -743,7 +747,21 @@ impl<'cx> MirFuncBuilder<'cx> {
             // typecast itself have no side effect.
             Expr::Typecast(_, expr) => _ = self.build_expr(expr.as_deref())?,
             Expr::Call(callee, args) => _ = self.build_call(callee.as_deref(), args.as_deref())?,
-            Expr::Subscript(_, _) => todo!(),
+            Expr::Subscript(expr, operand) => {
+                let expr_span = expr.span();
+                let (_, ty) = self.build_expr(expr.as_deref())?;
+                if !ty.is_arithmatic_or_ptr() {
+                    self.err_reporter
+                        .report(&Error::InvalidTyForOp(&ty).to_spanned(expr_span));
+                    return None;
+                }
+                let (_, ty) = self.build_expr(operand.as_deref())?;
+                if !ty.is_arithmatic_or_ptr() {
+                    self.err_reporter
+                        .report(&Error::InvalidTyForOp(&ty).to_spanned(expr_span));
+                    return None;
+                }
+            }
             Expr::Break => todo!(),
             Expr::Continue => todo!(),
             Expr::Case(_) => todo!(),
@@ -760,44 +778,53 @@ impl<'cx> MirFuncBuilder<'cx> {
         Some(())
     }
 
-    pub fn build_place(&mut self, expr: Spanned<&Expr>) -> Option<(Place, Ty)> {
-        let (mut expr, span) = expr.into_pair();
+    pub fn build_place(&mut self, mut expr: Spanned<&Expr>) -> Option<(Place, Ty)> {
+        let outer_span = expr.span();
         let mut projs = Vec::<PlaceProjection>::new();
         loop {
-            match expr {
-                Expr::Error => panic_expr_error!(span),
-                &Expr::Ident(name) => {
-                    let Some(&var_id) = self.cx.locals.var(name) else {
-                        self.err_reporter
-                            .report(&Error::VarDoesNotExist(name).to_spanned(span));
-                        return None;
-                    };
-                    let mut ty = self.mir_func.vars[var_id].ty.as_ref();
+            match expr.inner() {
+                Expr::Error => panic_expr_error!(expr.span()),
+                Expr::PrefixOp(PrefixOpKind::Deref, inner) => {
+                    projs.push(PlaceProjection::Deref);
+                    expr = inner.as_deref();
+                }
+                Expr::Subscript(_, _) => {
+                    todo!()
+                }
+                Expr::FieldPath(_, _) => todo!(),
+                _ => {
+                    let (value, mut ty) = self.build_expr(expr)?;
+                    match value {
+                        Value::CopyPlace(place) => {
+                            if projs.is_empty() {
+                                return Some((place, ty));
+                            }
+                        }
+                        Value::Void => {
+                            self.err_reporter
+                                .report(&Error::ExprNotAssignable.to_spanned(outer_span));
+                        }
+                        _ => (),
+                    }
                     for proj in projs.iter().rev() {
                         match (proj, &ty.kind) {
                             (PlaceProjection::Deref, TyKind::Ptr(_, inner)) => {
-                                ty = inner;
+                                ty = inner.clone();
                             }
                             (PlaceProjection::Deref, _) => {
-                                todo!()
+                                ty = TyKind::Ptr(
+                                    Restrictness::NoRestrict,
+                                    TyKind::Void.to_ty(false, false, None),
+                                )
+                                .to_ty(false, false, None);
                             }
                             (PlaceProjection::FieldDir(_), _) => todo!(),
                             (PlaceProjection::FieldInd(_), _) => todo!(),
                             (PlaceProjection::Index(_), _) => todo!(),
                         }
                     }
-                    return Some((var_id.into(), Rc::new(ty.clone())));
-                }
-                Expr::PrefixOp(PrefixOpKind::Deref, inner) => {
-                    projs.push(PlaceProjection::Deref);
-                    expr = inner.as_deref().into_inner();
-                }
-                Expr::Subscript(_, _) => todo!(),
-                Expr::FieldPath(_, _) => todo!(),
-                _ => {
-                    self.err_reporter
-                        .report(&Error::ExprNotAssignable.to_spanned(span));
-                    return None;
+                    let var_id = self.declare_var(ty.clone(), None, true)?;
+                    return Some((var_id.into(), ty));
                 }
             }
         }

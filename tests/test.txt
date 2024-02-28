@@ -1,5 +1,5 @@
 int main() {
     long x = 10;
-    x = x << (3 * 2 - 1);
+    *0 = 10;
     return 0;
 }

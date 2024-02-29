@@ -882,6 +882,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                         }
                     }
                     let var_id = self.declare_var(ty.clone(), None, true)?;
+                    self.add_inst(MirInst::Assign(var_id.into(), value));
                     let place = Place {
                         root: var_id,
                         projections: projs,

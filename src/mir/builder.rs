@@ -788,9 +788,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                     projs.push(PlaceProjection::Deref);
                     expr = inner.as_deref();
                 }
-                Expr::Subscript(_, _) => {
-                    todo!()
-                }
+                Expr::Subscript(_, _) => todo!(),
                 Expr::FieldPath(_, _) => todo!(),
                 _ => {
                     let (value, mut ty) = self.build_expr(expr)?;
@@ -818,13 +816,15 @@ impl<'cx> MirFuncBuilder<'cx> {
                                 )
                                 .to_ty(false, false, None);
                             }
-                            (PlaceProjection::FieldDir(_), _) => todo!(),
-                            (PlaceProjection::FieldInd(_), _) => todo!(),
-                            (PlaceProjection::Index(_), _) => todo!(),
+                            (PlaceProjection::Field(_), _) => todo!(),
                         }
                     }
                     let var_id = self.declare_var(ty.clone(), None, true)?;
-                    return Some((var_id.into(), ty));
+                    let place = Place {
+                        root: var_id,
+                        projections: projs,
+                    };
+                    return Some((place, ty));
                 }
             }
         }

@@ -184,16 +184,19 @@ pub struct VarInfo {
 /// A place is represented as one variable as a root with some projections on top of it, for example, in the case of:
 ///
 /// ```c
-/// *var->field0[idx].field1
+/// *var->field1
 /// ```
 ///
 /// ..., variable `var` is the root, the projections are:
 ///
 /// ```c
-/// "var".field_ind("field0").index("idx").field_dir("field1").deref
+/// "var".deref."field1".deref
 /// ```
 ///
 /// Projections are stored in reverse of their actual order due to the way it's parsed.
+/// Note that:
+/// - Indirect member accessing operator (`->`) is elaborated as `.deref."field"`.
+/// - Indexing is elaborated into multiple statements.
 #[derive(Clone, PartialEq)]
 pub struct Place {
     /// See `Place`.
@@ -214,11 +217,8 @@ impl From<VarId> for Place {
 /// See `Place`.
 #[derive(Clone, PartialEq)]
 pub enum PlaceProjection {
-    FieldDir(IdentStr),
-    FieldInd(IdentStr),
+    Field(IdentStr),
     Deref,
-    /// To avoid nesting values, operand of index could only be a variable.
-    Index(VarId),
 }
 
 /// A `Value` is the representation of an r-value.
@@ -328,10 +328,8 @@ impl Debug for Value {
 impl Debug for PlaceProjection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::FieldDir(name) => write!(f, ".field_dir({name:?})"),
-            Self::FieldInd(name) => write!(f, ".field_ind({name:?})"),
+            Self::Field(name) => write!(f, ".{name:?}"),
             Self::Deref => write!(f, ".deref"),
-            Self::Index(var) => write!(f, ".index({var:?})"),
         }
     }
 }

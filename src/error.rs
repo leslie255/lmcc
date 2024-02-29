@@ -83,6 +83,7 @@ pub enum Error<'a> {
     InvalidTypecast(&'a Ty_, &'a Ty_),
     InvalidTyForOp(&'a Ty_),
     InvalidBsOper,
+    ExprNotDerefable,
 }
 
 impl Error<'_> {

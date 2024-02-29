@@ -810,6 +810,10 @@ impl<'cx> MirFuncBuilder<'cx> {
                                 ty = inner.clone();
                             }
                             (PlaceProjection::Deref, _) => {
+                                if !ty.is_arithmatic_or_ptr() {
+                                    self.err_reporter
+                                        .report(&Error::ExprNotDerefable.to_spanned(expr.span()));
+                                }
                                 ty = TyKind::Ptr(
                                     Restrictness::NoRestrict,
                                     TyKind::Void.to_ty(false, false, None),

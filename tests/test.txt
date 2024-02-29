@@ -7,5 +7,6 @@ int main() {
         f(2);
     else
         f(3);
+    *0 = 0;
     return 0;
 }

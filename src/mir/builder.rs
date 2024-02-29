@@ -11,11 +11,12 @@ use crate::{
     error::{Error, ErrorReporter, ExprNotAllowedReason, Span, Spanned, ToSpanned},
     mir::{BinOpKind, BsKind, NumLiteralContent},
     token::NumValue,
-    utils::IdentStr,
+    utils::{match_into_unchecked, IdentStr},
 };
 
 use super::{
-    BlockId, FuncData, MirBlock, MirBlockTag, MirFunction, MirInst, MirTerm, NamesContext, Place, PlaceProjection, Value, VarId, VarInfo
+    BlockId, FuncData, MirBlock, MirBlockTag, MirFunction, MirInst, MirTerm, NamesContext, Place,
+    PlaceProjection, Value, VarId, VarInfo,
 };
 
 /// `Expr::Error` should not occur in this stage of the compilation.
@@ -677,8 +678,12 @@ impl<'cx> MirFuncBuilder<'cx> {
             !elifs.is_empty(),
             "If expression has zero else-if blocks at MIR building stage"
         );
-        let elif_block_ids: Vec<BlockId> = elifs.iter().map(|_| self.create_block(MirBlockTag::If)).collect();
-        let else_block: Option<BlockId> = else_.as_ref().map(|_| self.create_block(MirBlockTag::Else));
+        let elif_block_ids: Vec<BlockId> = elifs
+            .iter()
+            .map(|_| self.create_block(MirBlockTag::If))
+            .collect();
+        let else_block: Option<BlockId> =
+            else_.as_ref().map(|_| self.create_block(MirBlockTag::Else));
         let merge_block = self.create_block(MirBlockTag::FuncBody);
         for (i, (cond, exprs)) in elifs.iter().enumerate() {
             let cond_span = cond.span();
@@ -842,10 +847,14 @@ impl<'cx> MirFuncBuilder<'cx> {
                 Expr::Subscript(_, _) => todo!(),
                 Expr::FieldPath(_, _) => todo!(),
                 _ => {
-                    let (value, mut ty) = self.build_expr(expr)?;
-                    match value {
-                        Value::CopyPlace(place) => {
+                    let (mut value, value_ty) = self.build_expr(expr)?;
+                    let mut ty = value_ty.clone();
+                    match &value {
+                        Value::CopyPlace(..) => {
                             if projs.is_empty() {
+                                let place = unsafe {
+                                    match_into_unchecked!(value, Value::CopyPlace(place) => place)
+                                };
                                 return Some((place, ty));
                             }
                         }
@@ -861,15 +870,13 @@ impl<'cx> MirFuncBuilder<'cx> {
                                 ty = inner.clone();
                             }
                             (PlaceProjection::Deref, _) => {
-                                if !ty.is_arithmatic_or_ptr() {
-                                    self.err_reporter
-                                        .report(&Error::ExpectArithmaticTy.to_spanned(expr.span()));
-                                }
                                 ty = TyKind::Ptr(
                                     Restrictness::NoRestrict,
                                     TyKind::Void.to_ty(false, false, None),
                                 )
                                 .to_ty(false, false, None);
+                                value =
+                                    self.use_value(ty.clone(), (value, value_ty.clone()), expr.span())?;
                             }
                             (PlaceProjection::Field(_), _) => todo!(),
                         }

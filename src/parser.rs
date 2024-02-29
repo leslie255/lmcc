@@ -1111,7 +1111,11 @@ impl Parser {
         Some(Expr::FieldPath(root.into_boxed(), items).to_spanned(span))
     }
 
-    fn parse_expr_or_block(&mut self, prev_span: Span) -> Option<ExprOrBlock> {
+    fn parse_expr_or_block(
+        &mut self,
+        prev_span: Span,
+        take_semicolon: bool,
+    ) -> Option<ExprOrBlock> {
         match self.expect_peek_token(prev_span)?.as_pair() {
             (Token::BraceOpen, span) => {
                 self.tokens.next();
@@ -1120,6 +1124,9 @@ impl Parser {
             }
             (_, span) => {
                 let expr = self.parse_expr(span, 16)?;
+                if take_semicolon {
+                    self.consume_semicolons(span, expr.allow_omit_semicolon());
+                }
                 Some(expr.into())
             }
         }
@@ -1248,14 +1255,14 @@ impl Parser {
                 let span = expect_token!(self, Token::ParenOpen, span);
                 let cond = self.parse_expr(span, 16)?;
                 let span = expect_token!(self, Token::ParenClose, cond.span());
-                let body = self.parse_expr_or_block(span)?;
+                let body = self.parse_expr_or_block(span, false)?;
                 let span = start_span.join(body.span());
                 Some(Expr::While(cond.into_boxed(), body).to_spanned(span))
             }
             Token::Do => {
                 self.tokens.next();
                 let start_span = span;
-                let body = self.parse_expr_or_block(span)?;
+                let body = self.parse_expr_or_block(span, true)?;
                 let span = body.span();
                 let span = expect_token!(self, Token::While, span);
                 let span = expect_token!(self, Token::ParenOpen, span);
@@ -1269,7 +1276,7 @@ impl Parser {
                 let span = expect_token!(self, Token::ParenOpen, span);
                 let cond = self.parse_expr(span, 16)?;
                 let span = expect_token!(self, Token::ParenClose, cond.span());
-                let body = self.parse_expr_or_block(span)?;
+                let body = self.parse_expr_or_block(span, false)?;
                 let span = start_span.join(body.span());
                 Some(Expr::Switch(cond.into_boxed(), body).to_spanned(span))
             }
@@ -1294,7 +1301,7 @@ impl Parser {
                 let (expr0, span) = parse_fragment!(span, Token::Semicolon);
                 let (expr1, span) = parse_fragment!(span, Token::Semicolon);
                 let (expr2, span) = parse_fragment!(span, Token::ParenClose);
-                let body = self.parse_expr_or_block(span)?;
+                let body = self.parse_expr_or_block(span, false)?;
                 let span = start_span.join(body.span());
                 Some(
                     Expr::For(
@@ -1313,12 +1320,12 @@ impl Parser {
                     let span = expect_token!(self, Token::ParenOpen, $prev_span);
                     let cond = self.parse_expr(span, 16)?;
                     let span = expect_token!(self, Token::ParenClose, cond.span());
-                    let body = self.parse_expr_or_block(span)?;
+                    let body = self.parse_expr_or_block(span, true)?;
                     (cond, body)
                 }}
                 let (cond, body) = parse_elif_branch!(span);
                 let mut end_span = body.span();
-                let mut elifs = Vec::<_>::from_iter([(cond.into_boxed(), body)]);
+                let mut elifs = Vec::from_iter([(cond, body)]);
                 let mut else_ = Option::<ExprOrBlock>::None;
                 while let Some(token) = self.tokens.peek() {
                     let Some(span) = match_into!(token.as_pair(), (Token::Else, span) => span)
@@ -1331,10 +1338,10 @@ impl Parser {
                             self.tokens.next();
                             let (cond, body) = parse_elif_branch!(span);
                             end_span = body.span();
-                            elifs.push((cond.into_boxed(), body))
+                            elifs.push((cond, body))
                         }
                         _ => {
-                            let body = self.parse_expr_or_block(span)?;
+                            let body = self.parse_expr_or_block(span, false)?;
                             end_span = body.span();
                             else_ = Some(body);
                             break;
@@ -1579,6 +1586,7 @@ impl Parser {
                 prev_span = span;
             }
             _ => {
+                dbg!();
                 if !allows_omit {
                     self.err_reporter
                         .report(&Error::MissingSemicolon.to_spanned(prev_span.tail()));

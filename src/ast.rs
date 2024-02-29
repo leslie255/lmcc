@@ -33,7 +33,7 @@ pub enum Expr {
     Labal(IdentStr),
     Goto(IdentStr),
     Typecast(Ty, ChildExpr),
-    Call(ChildExpr, Spanned<ExprBlock>),
+    Call(ChildExpr, Spanned<Vec<Spanned<Expr>>>),
     Subscript(ChildExpr, ChildExpr),
     Break,
     Continue,
@@ -51,7 +51,7 @@ pub enum Expr {
         Option<ChildExpr>,
         ExprOrBlock,
     ),
-    If(Vec<(ChildExpr, ExprOrBlock)>, Option<ExprOrBlock>),
+    If(Vec<(Spanned<Expr>, ExprOrBlock)>, Option<ExprOrBlock>),
     List(Vec<ListItem>),
     Tenary(ChildExpr, ChildExpr, ChildExpr),
 }
@@ -438,6 +438,14 @@ impl ExprOrBlock {
     #[allow(dead_code)]
     pub const fn is_expr(&self) -> bool {
         matches!(self, Self::Expr(..))
+    }
+}
+impl AsRef<[Spanned<Expr>]> for ExprOrBlock {
+    fn as_ref(&self) -> &[Spanned<Expr>] {
+        match self {
+            ExprOrBlock::Expr(expr) => std::slice::from_ref(expr.as_ref()),
+            ExprOrBlock::Block(exprs) => &exprs,
+        }
     }
 }
 

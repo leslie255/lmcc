@@ -4,8 +4,8 @@ use index_vec::{index_vec, IndexVec};
 
 use crate::{
     ast::{
-        AssignOpKind, DeclItem, Expr, FloatSize, InfixOpKind, IntSize, PrefixOpKind, Restrictness,
-        Signature, Signness, Ty, TyKind, Ty_, VarSpecifier,
+        AssignOpKind, DeclItem, Expr, ExprOrBlock, FloatSize, InfixOpKind, IntSize, PrefixOpKind,
+        Restrictness, Signature, Signness, Ty, TyKind, Ty_, VarSpecifier,
     },
     consteval::consteval_ast,
     error::{Error, ErrorReporter, ExprNotAllowedReason, Span, Spanned, ToSpanned},
@@ -15,8 +15,7 @@ use crate::{
 };
 
 use super::{
-    BlockId, FuncData, MirBlock, MirFunction, MirInst, MirTerm, NamesContext, Place,
-    PlaceProjection, Value, VarId, VarInfo,
+    BlockId, FuncData, MirBlock, MirBlockTag, MirFunction, MirInst, MirTerm, NamesContext, Place, PlaceProjection, Value, VarId, VarInfo
 };
 
 /// `Expr::Error` should not occur in this stage of the compilation.
@@ -172,7 +171,7 @@ impl<'cx> MirFuncBuilder<'cx> {
             args,
             ret: sig.ret_ty.into_inner(),
             vars,
-            blocks: index_vec![MirBlock::default()],
+            blocks: index_vec![MirBlock::new_empty(MirBlockTag::FuncBody)],
         };
         let self_ = Self {
             cx,
@@ -236,6 +235,15 @@ impl<'cx> MirFuncBuilder<'cx> {
         }
         Some(var_id)
     }
+
+    fn create_block(&mut self, tag: MirBlockTag) -> BlockId {
+        self.mir_func.blocks.push(MirBlock::new_empty(tag))
+    }
+
+    fn switch_to_block(&mut self, block_id: BlockId) {
+        self.current_block = block_id;
+    }
+
     fn use_num(
         &mut self,
         expect_ty: Ty,
@@ -659,6 +667,49 @@ impl<'cx> MirFuncBuilder<'cx> {
         ));
         Some((Value::CopyPlace(var_id.into()), target_ty))
     }
+
+    fn build_if(
+        &mut self,
+        elifs: &[(Spanned<Expr>, ExprOrBlock)],
+        else_: Option<&ExprOrBlock>,
+    ) -> Option<()> {
+        assert!(
+            !elifs.is_empty(),
+            "If expression has zero else-if blocks at MIR building stage"
+        );
+        let elif_block_ids: Vec<BlockId> = elifs.iter().map(|_| self.create_block(MirBlockTag::If)).collect();
+        let else_block: Option<BlockId> = else_.as_ref().map(|_| self.create_block(MirBlockTag::Else));
+        let merge_block = self.create_block(MirBlockTag::FuncBody);
+        for (i, (cond, exprs)) in elifs.iter().enumerate() {
+            let cond_span = cond.span();
+            let block_id = elif_block_ids[i];
+            let next_block_id = if let Some(&id) = elif_block_ids.get(i + 1) {
+                id
+            } else if let Some(id) = else_block {
+                id
+            } else {
+                merge_block
+            };
+            let cond = self.build_expr(cond.as_ref())?;
+            let cond_val =
+                self.use_value(TyKind::Bool.to_ty(false, false, None), cond, cond_span)?;
+            self.add_inst(MirTerm::JumpIf(cond_val, block_id, next_block_id).into());
+            self.switch_to_block(block_id);
+            for stmt in exprs.as_ref() {
+                self.build_stmt(stmt.as_ref());
+            }
+        }
+        self.add_inst(MirTerm::Jump(merge_block).into());
+        if let Some(else_) = else_ {
+            self.switch_to_block(else_block.unwrap());
+            for stmt in else_.as_ref() {
+                self.build_stmt(stmt.as_ref());
+            }
+            self.add_inst(MirTerm::Jump(merge_block).into());
+        }
+        self.switch_to_block(merge_block);
+        Some(())
+    }
     pub fn build_stmt(&mut self, stmt: Spanned<&Expr>) -> Option<()> {
         let (stmt, span) = stmt.into_pair();
         match stmt {
@@ -771,7 +822,7 @@ impl<'cx> MirFuncBuilder<'cx> {
             Expr::DoWhile(_, _) => todo!(),
             Expr::Switch(_, _) => todo!(),
             Expr::For(_, _, _, _) => todo!(),
-            Expr::If(_, _) => todo!(),
+            Expr::If(elifs, else_) => self.build_if(elifs, else_.as_ref())?,
             Expr::List(_) => todo!(),
             Expr::Tenary(_, _, _) => todo!(),
         }
@@ -812,7 +863,7 @@ impl<'cx> MirFuncBuilder<'cx> {
                             (PlaceProjection::Deref, _) => {
                                 if !ty.is_arithmatic_or_ptr() {
                                     self.err_reporter
-                                        .report(&Error::ExprNotDerefable.to_spanned(expr.span()));
+                                        .report(&Error::ExpectArithmaticTy.to_spanned(expr.span()));
                                 }
                                 ty = TyKind::Ptr(
                                     Restrictness::NoRestrict,

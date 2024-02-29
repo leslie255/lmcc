@@ -7,7 +7,9 @@ use std::{
 use index_vec::IndexVec;
 
 use crate::{
-    ast::{EnumFields, Signature, StructFields, Ty}, error::Spanned, utils::{index_vec_kv_pairs, DoInBetween, IdentStr}
+    ast::{EnumFields, Signature, StructFields, Ty},
+    error::Spanned,
+    utils::{index_vec_kv_pairs, DoInBetween, IdentStr},
 };
 
 mod builder;
@@ -101,6 +103,36 @@ pub struct MirBlock {
     pub unreachable_insts: Vec<MirInst>,
     /// Flag used during construction of this MIR block, invalid afterwards.
     pub(self) is_terminated: bool,
+    /// What type of statement generated this block? `if`, `while`, etc.
+    pub tag: MirBlockTag,
+}
+
+impl MirBlock {
+    pub const fn new_empty(tag: MirBlockTag) -> Self {
+        Self {
+            insts: Vec::new(),
+            unreachable_insts: Vec::new(),
+            is_terminated: false,
+            tag,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MirBlockTag {
+    Untagged,
+    FuncBody,
+    If,
+    Else,
+    While,
+    DoWhile,
+    Goto,
+}
+
+impl Default for MirBlockTag {
+    fn default() -> Self {
+        Self::Untagged
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -138,6 +170,11 @@ pub enum MirInst {
     CallDynamic(Option<Place>, Value, Vec<Value>),
     /// Block terminator.
     Term(MirTerm),
+}
+impl From<MirTerm> for MirInst {
+    fn from(value: MirTerm) -> Self {
+        Self::Term(value)
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -455,10 +492,12 @@ impl Debug for MirBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.unreachable_insts.is_empty() {
             f.debug_struct("MirBlock")
+                .field("tag", &self.tag)
                 .field("insts", &self.insts)
                 .finish()
         } else {
             f.debug_struct("MirBlock")
+                .field("tag", &self.tag)
                 .field("insts", &self.insts)
                 .field("unreachable_insts", &self.unreachable_insts)
                 .finish()
